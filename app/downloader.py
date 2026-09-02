@@ -336,11 +336,46 @@ def _channel_ref(value: str) -> str | int:
 
 
 def _parsed_telegram_url(link: str):
-    value = link.strip().strip("<>\"'")
+    """Normalize a pasted Telegram URL before parsing it.
+
+    Telegram's share action may produce internal links in either of these
+    forms: ``/c/<channel>/<message>`` or
+    ``/c/<channel>/<topic>/<message>``.  Users also commonly paste a link
+    followed by punctuation or a fragment from the surrounding message.
+    """
+    value = (link or "").strip().strip("<>\"'")
+    value = value.rstrip(".,،؛:!?؟)]}>")
     if "://" not in value:
         value = "https://" + value
     parsed = urlparse(value)
     return value, parsed
+
+
+def _internal_message_parts(parts: list[str]) -> tuple[int, int] | None:
+    """Return ``(private chat id, message id)`` for a ``t.me/c`` path.
+
+    The middle numeric segment is a forum topic/thread identifier when
+    present; Telegram's actual message identifier is always the final
+    numeric segment.  Accepting both two- and three-segment forms avoids
+    treating a valid internal message URL as a channel-only URL.
+    """
+    if len(parts) < 2 or not parts[0].isdigit() or not all(part.isdigit() for part in parts[1:]):
+        return None
+    return _channel_ref(parts[0]), int(parts[-1])
+
+
+def _is_internal_chat_path(parts: list[str]) -> bool:
+    return bool(parts and parts[0].lower() == "c" and _internal_message_parts(parts[1:]))
+
+
+def _message_path_parts(parts: list[str]) -> tuple[str | int, int] | None:
+    if _is_internal_chat_path(parts):
+        result = _internal_message_parts(parts[1:])
+        assert result is not None
+        return result
+    if len(parts) >= 2 and parts[0].lower() not in {"c", "joinchat"} and parts[-1].isdigit():
+        return parts[0].lstrip("@"), int(parts[-1])
+    return None
 
 
 def parse_message_link(link: str) -> tuple[str | int, int]:
@@ -371,12 +406,11 @@ def parse_message_link(link: str) -> tuple[str | int, int]:
     parts = [part for part in parsed.path.split("/") if part]
     if parts and parts[0].lower() == "s":
         parts = parts[1:]
-    if (len(parts) >= 3 and parts[0].lower() == "c" and parts[1].isdigit()
-            and all(part.isdigit() for part in parts[2:])):
-        # روابط الموضوعات قد تحتوي على أكثر من رقم؛ رقم الرسالة هو الرقم الأخير.
-        return _channel_ref(parts[1]), int(parts[-1])
-    if len(parts) >= 2 and parts[0].lower() not in {"c", "joinchat"} and parts[-1].isdigit():
-        return parts[0].lstrip("@"), int(parts[-1])
+    message_ref = _message_path_parts(parts)
+    if message_ref is not None:
+        # In /c/<channel>/<topic>/<message>, the topic is context only;
+        # Telegram fetches the actual post by the final message id.
+        return message_ref
     raise ValueError("رابط رسالة Telegram غير صالح")
 
 

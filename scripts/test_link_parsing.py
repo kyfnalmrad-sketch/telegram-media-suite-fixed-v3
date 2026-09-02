@@ -29,6 +29,10 @@ assert parse_chat_link('https://t.me/+InviteHash').startswith('https://t.me/+')
 assert parse_chat_link('tg://join?invite=InviteHash') == 'https://t.me/+InviteHash'
 assert parse_message_link('https://t.me/c/4405004978/3') == (-1004405004978, 3)
 assert parse_message_link('https://t.me/c/4405004978/3/28?single') == (-1004405004978, 28)
+# Regression for the reported internal topic/message URL.
+assert parse_message_link('https://t.me/c/4405004978/39/49') == (-1004405004978, 49)
+assert parse_message_link('https://t.me/c/4405004978/39/49?single#top') == (-1004405004978, 49)
+assert parse_message_link('https://t.me/c/4405004978/39/49،') == (-1004405004978, 49)
 
 text = '''
 https://t.me/example/42, t.me/example/42?single
@@ -45,6 +49,10 @@ assert extract_telegram_links(text) == [
     'TG://resolve?domain=example&post=44',
     'https://telegram.dog/example/45',
     'https://t.me/+InviteHash',
+]
+
+assert extract_telegram_links('تم التنزيل من https://t.me/c/4405004978/39/49.') == [
+    'https://t.me/c/4405004978/39/49'
 ]
 
 concatenated = (
