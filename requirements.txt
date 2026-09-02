@@ -1,0 +1,5 @@
+Flask>=3.0,<4
+Pyrogram>=2.0,<3
+PyTgCrypto>=1.2,<2
+PyYAML>=6.0,<7
+gunicorn>=22.0,<24

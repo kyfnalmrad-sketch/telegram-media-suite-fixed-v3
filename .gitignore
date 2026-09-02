@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.log
+.env
+*.tmp
+build/
+dist/
+*.spec
+storage/
+sessions/
