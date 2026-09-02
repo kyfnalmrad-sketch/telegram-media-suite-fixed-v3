@@ -18,8 +18,11 @@ def bootstrap() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
     encoded_session = os.environ.get("TMD_SESSION_B64", "").strip()
+    # Never overwrite a live/newer session with a stale environment snapshot.
+    # Set TMD_SESSION_B64_FORCE=true only when intentionally restoring a backup.
+    force_restore = os.environ.get("TMD_SESSION_B64_FORCE", "").strip().lower() == "true"
     session_file = SESSION_DIR / "tmd_user.session"
-    if encoded_session:
+    if encoded_session and (force_restore or not session_file.exists()):
         session_bytes = base64.b64decode(encoded_session, validate=True)
         temporary_session = session_file.with_suffix(".session.tmp")
         temporary_session.write_bytes(session_bytes)

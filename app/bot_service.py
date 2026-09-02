@@ -1377,13 +1377,28 @@ class TelegramBotService:
         return percent, speed_mbps, eta
 
     async def _progress_pulse(self, progress_message: Any, progress_state: dict[str, Any]) -> None:
+        """Refresh the Telegram progress message while a download is active."""
         while not progress_state.get("done"):
             total = int(progress_state.get("total", 0))
             current = int(progress_state.get("current", 0))
             elapsed = time.monotonic() - float(progress_state.get("started_at", time.monotonic()))
             if total > 0:
                 await self._edit_progress(progress_message, current, total, elapsed)
-            await asyncio.sleep(2.0)
+            else:
+                # Keep the UI visibly alive until Telegram reports the size.
+                await self._edit_progress_indeterminate(progress_message, elapsed)
+            await asyncio.sleep(1.0)
+
+    async def _edit_progress_indeterminate(self, progress_message: Any, elapsed: float) -> None:
+        frames = ("▰▱▱▱▱▱▱▱▱▱▱▱", "▱▰▱▱▱▱▱▱▱▱▱▱", "▱▱▰▱▱▱▱▱▱▱▱▱", "▱▱▱▰▱▱▱▱▱▱▱▱")
+        frame = frames[int(max(0.0, elapsed)) % len(frames)]
+        try:
+            await progress_message.edit_text(
+                f"جارٍ تجهيز التنزيل\n[{frame}]\nالبيانات: في انتظار حجم الملف…",
+                reply_markup=self._reply_keyboard(),
+            )
+        except Exception:
+            pass
 
     async def _edit_progress(self, progress_message: Any, current: int, total: int, elapsed: float = 0.0) -> None:
         if total <= 0:
@@ -1391,6 +1406,11 @@ class TelegramBotService:
         percent, speed_mbps, eta = self._progress_metrics(current, total, elapsed or 0.001)
         filled = min(12, int(percent // 8.34))
         bar = "■" * filled + "░" * (12 - filled)
+        # A moving marker makes the UI feel alive even when the byte counter
+        # pauses briefly between chunks; the percentage remains authoritative.
+        if percent < 100.0 and filled < 12:
+            frames = ("▸", "▹", "▸", "▹")
+            bar = bar[:filled] + frames[int(time.monotonic()) % len(frames)] + bar[filled + 1:]
         current_mb = current / (1024 * 1024)
         total_mb = total / (1024 * 1024)
         eta_text = "—" if eta is None else f"{int(max(0, eta))} ث"

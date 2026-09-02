@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import threading
 import time
@@ -11,21 +12,44 @@ except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from pyrogram import Client
 from pyrogram.errors import SessionPasswordNeeded, RPCError
 
-TELEGRAM_HOSTS = {"t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog"}
+TELEGRAM_HOSTS = {
+    "t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog",
+    "www.telegram.dog", "telesco.pe", "www.telesco.pe",
+}
 URL_RE = re.compile(
-    r"(?i)(?:(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>\[\]{}]+|"
+    r"(?i)(?:(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog|telesco\.pe)/[^\s<>\[\]{}]+|"
     r"tg://(?:resolve|privatepost|msg_url|openmessage|join)\?[^\s<>\[\]{}]+)"
 )
+
+
+def _proxy_from_env() -> dict[str, Any] | None:
+    """Build a Pyrogram proxy config from TMD_PROXY_URL when configured."""
+    raw = os.environ.get("TMD_PROXY_URL", "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() not in {"socks5", "socks5h", "http", "https"} or not parsed.hostname or not parsed.port:
+        raise ValueError("TMD_PROXY_URL يجب أن يكون socks5:// أو http:// مع المضيف والمنفذ")
+    proxy: dict[str, Any] = {
+        "scheme": "socks5" if parsed.scheme.lower() == "socks5h" else parsed.scheme.lower(),
+        "hostname": parsed.hostname,
+        "port": parsed.port,
+    }
+    if parsed.username:
+        proxy["username"] = unquote(parsed.username)
+    if parsed.password:
+        proxy["password"] = unquote(parsed.password)
+    return proxy
 URL_START_RE = re.compile(
     r"(?i)(?:"
-    r"(?=https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/)|"
-    r"(?<![A-Za-z0-9_/:])(?=(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/)|"
+    r"(?=https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog|telesco\.pe)/)|"
+    r"(?<![A-Za-z0-9_/:])(?=(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog|telesco\.pe)/)|"
     r"(?=tg://(?:resolve|privatepost|msg_url|openmessage|join)\?)"
     r")"
 )
@@ -42,6 +66,7 @@ class TelegramSession:
         self.log = log
         self.loop: asyncio.AbstractEventLoop | None = None
         self.client: Client | None = None
+        self.proxy = _proxy_from_env()
         self.thread: threading.Thread | None = None
         self.state = "starting"
         self.pending_phone = ""
@@ -67,6 +92,7 @@ class TelegramSession:
                 api_hash=self.api_hash,
                 workdir=self.session_path,
                 no_updates=True,
+                proxy=self.proxy,
             )
             self.log("اكتملت تهيئة عميل جلسة Telegram.")
             session_file = Path(self.session_path) / "tmd_user.session"
@@ -193,7 +219,10 @@ class TelegramSession:
                 counter += 1
             file_path = candidate
 
-        async def on_progress(current: int, total: int) -> None:
+        # Pyrogram invokes this callback synchronously while chunks arrive.
+        # A synchronous callback is important: an async callback would be
+        # created but not awaited, leaving the UI stuck at 0%.
+        def on_progress(current: int, total: int) -> None:
             progress(current, total)
 
         result = await self.client.download_media(message, file_name=str(file_path), progress=on_progress)
@@ -343,7 +372,7 @@ def _parsed_telegram_url(link: str):
     ``/c/<channel>/<topic>/<message>``.  Users also commonly paste a link
     followed by punctuation or a fragment from the surrounding message.
     """
-    value = (link or "").strip().strip("<>\"'")
+    value = unquote((link or "").strip().strip("<>\"'"))
     value = value.rstrip(".,،؛:!?؟)]}>")
     if "://" not in value:
         value = "https://" + value

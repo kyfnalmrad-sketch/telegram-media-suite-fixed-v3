@@ -32,6 +32,10 @@ services:
         value: "2104850156"
       - key: TMD_SESSION_B64
         sync: false
+      - key: TMD_SESSION_B64_FORCE
+        value: "false"
+      - key: TMD_PROXY_URL
+        sync: false
       - key: TMD_DASHBOARD_TOKEN
         sync: false
       - key: SELF_ENROLLMENT_ENABLED
