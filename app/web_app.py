@@ -105,17 +105,19 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
     rows = payload if isinstance(payload, list) else payload.get("envVars", payload.get("items", payload.get("environmentVariables", [])))
     imported: dict[str, str] = {}
     allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START"}
+    aliases = {f"TELEGRAM_{key}": key for key in allowed}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
         key = str(row.get("key", row.get("envVarKey", row.get("name", "")))).strip()
+        key = aliases.get(key, key)
         value = row.get("value", row.get("envVarValue"))
         if key in allowed and value is not None:
             imported[key] = str(value)
     # Render may return names without secret values; the running service still
     # has the actual values in its own environment, so use them as a fallback.
     for key in allowed:
-        runtime_value = os.environ.get(key, "").strip()
+        runtime_value = os.environ.get(key, os.environ.get(f"TELEGRAM_{key}", "")).strip()
         if key not in imported and runtime_value:
             imported[key] = runtime_value
     if not imported:
@@ -149,6 +151,8 @@ def sync_render_environment(values: dict[str, Any], api_key: str = "", service_i
         value = values.get(setting, "")
         if value is None or value == "":
             continue
+        if os.environ.get(f"TELEGRAM_{env_key}"):
+            env_key = f"TELEGRAM_{env_key}"
         request = Request(
             f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/{quote(env_key, safe='')}",
             data=json.dumps({"value": str(value)}).encode("utf-8"),

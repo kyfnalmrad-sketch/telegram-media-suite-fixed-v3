@@ -31,6 +31,14 @@ ENV_NAMES = {
     "auto_start": "AUTO_START",
     "render_service_id": "RENDER_SERVICE_ID",
 }
+ENV_ALIASES = {
+    "API_ID": "TELEGRAM_API_ID",
+    "API_HASH": "TELEGRAM_API_HASH",
+    "BOT_TOKEN": "TELEGRAM_BOT_TOKEN",
+    "PHONE": "TELEGRAM_PHONE",
+    "ALLOWED_USER_IDS": "TELEGRAM_ALLOWED_USER_IDS",
+    "AUTO_START": "TELEGRAM_AUTO_START",
+}
 
 
 def _load_env() -> dict[str, str]:
@@ -55,7 +63,10 @@ def _is_true(value: Any) -> bool:
 
 def _apply_env(data: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
     for setting_key, env_key in ENV_NAMES.items():
+        alias = ENV_ALIASES.get(env_key, "")
         value = os.environ.get(env_key, env.get(env_key, ""))
+        if not value and alias:
+            value = os.environ.get(alias, env.get(alias, ""))
         if not value:
             continue
         data[setting_key] = _is_true(value) if setting_key == "auto_start" else value

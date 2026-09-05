@@ -22,7 +22,7 @@ class FakeResponse:
 
 env_payload = [
     {'key': 'API_ID', 'value': '12345'},
-    {'key': 'API_HASH', 'value': 'hash-value'},
+    {'key': 'TELEGRAM_API_HASH', 'value': 'hash-value'},
     {'key': 'BOT_TOKEN', 'value': 'bot-value'},
     {'key': 'PHONE', 'value': '+10000000000'},
     {'key': 'ALLOWED_USER_IDS', 'value': '42'},
