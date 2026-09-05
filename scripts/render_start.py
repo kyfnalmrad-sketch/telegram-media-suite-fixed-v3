@@ -36,10 +36,10 @@ def bootstrap() -> None:
         session_file.chmod(0o600)
 
     settings = {
-        "api_id": os.environ.get("API_ID", ""),
+        "api_id": os.environ.get("API_ID", os.environ.get("TELEGRAM_API_ID", "")),
         "storage_path": str(STORAGE_DIR),
         "session_path": str(SESSION_DIR),
-        "allowed_user_ids": os.environ.get("ALLOWED_USER_IDS", ""),
+        "allowed_user_ids": os.environ.get("ALLOWED_USER_IDS", os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "")),
         "auto_start": True,
     }
     if not SETTINGS_FILE.exists():
