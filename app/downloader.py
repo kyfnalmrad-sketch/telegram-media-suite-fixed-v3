@@ -556,8 +556,12 @@ class DownloadManager:
         return "تم إرسال الإدخال"
 
     def submit_download(self, link: str, target_root: str) -> tuple[bool, str]:
-        if not URL_RE.match(link.strip()):
-            return False, "الرابط يجب أن يكون رابط رسالة Telegram صالحًا"
+        # استخدم المحلل الموحد بعد تنظيف الرابط بدل الاعتماد على مطابقة نصية فقط.
+        # هذا يدعم روابط /c/<channel>/<topic>/<message> والروابط المنسوخة مع إضافات.
+        try:
+            parse_message_link(link)
+        except ValueError:
+            return False, "الرابط يجب أن يكون رابط رسالة صالحًا، مثل https://t.me/c/123/45"
         if not self.session or self.session.snapshot()["state"] != "ready":
             return False, "سجّل الدخول إلى Telegram أولًا"
         job_id = str(uuid4())
