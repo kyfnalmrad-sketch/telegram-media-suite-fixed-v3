@@ -102,18 +102,24 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
         raise RuntimeError(f"تعذر الاتصال بـ Render (HTTP {exc.code})") from exc
     except (URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise RuntimeError("تعذر الاتصال بـ Render أو قراءة استجابته") from exc
-    rows = payload if isinstance(payload, list) else payload.get("envVars", payload.get("items", []))
+    rows = payload if isinstance(payload, list) else payload.get("envVars", payload.get("items", payload.get("environmentVariables", [])))
     imported: dict[str, str] = {}
     allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START"}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
-        key = str(row.get("key", "")).strip()
-        value = row.get("value")
+        key = str(row.get("key", row.get("envVarKey", row.get("name", "")))).strip()
+        value = row.get("value", row.get("envVarValue"))
         if key in allowed and value is not None:
             imported[key] = str(value)
+    # Render may return names without secret values; the running service still
+    # has the actual values in its own environment, so use them as a fallback.
+    for key in allowed:
+        runtime_value = os.environ.get(key, "").strip()
+        if key not in imported and runtime_value:
+            imported[key] = runtime_value
     if not imported:
-        raise RuntimeError("لم يجد Render متغيرات إعداد مدعومة لهذه الخدمة")
+        raise RuntimeError("لم يجد Render قيم إعداد قابلة للقراءة. تأكد من المفتاح وService ID، أو أضف API_ID وAPI_HASH وBOT_TOKEN وPHONE في Environment للخدمة.")
     current = load_settings()
     reverse = {"API_ID": "api_id", "API_HASH": "api_hash", "BOT_TOKEN": "bot_token",
                "PHONE": "phone", "ALLOWED_USER_IDS": "allowed_user_ids", "AUTO_START": "auto_start",
