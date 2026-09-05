@@ -38,5 +38,7 @@ services:
         sync: false
       - key: TMD_DASHBOARD_TOKEN
         sync: false
+      - key: RENDER_API_KEY
+        sync: false
       - key: SELF_ENROLLMENT_ENABLED
         value: "false"

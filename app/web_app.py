@@ -7,6 +7,8 @@ import os
 import threading
 import time
 import webbrowser
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from collections import deque
 from pathlib import Path
 from typing import Any
@@ -77,6 +79,87 @@ def logs() -> list[str]:
 
 
 manager = DownloadManager(log=log)
+
+
+def import_render_environment(api_key: str = "", service_id: str = "") -> dict[str, Any]:
+    """Fetch service env vars from Render without exposing them in the response."""
+    token = (api_key or os.environ.get("RENDER_API_KEY", "")).strip()
+    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "")).strip()
+    if not token or not service:
+        raise RuntimeError("أدخل Render API Key وService ID أو اضبطهما في Environment")
+    request = Request(
+        f"https://api.render.com/v1/services/{service}/env-vars?limit=100",
+        headers={"Accept": "application/json", "Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code in {401, 403}:
+            raise RuntimeError("Render رفض مفتاح API أو لا يملك صلاحية الوصول للخدمة") from exc
+        raise RuntimeError(f"تعذر الاتصال بـ Render (HTTP {exc.code})") from exc
+    except (URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError("تعذر الاتصال بـ Render أو قراءة استجابته") from exc
+    rows = payload if isinstance(payload, list) else payload.get("envVars", payload.get("items", []))
+    imported: dict[str, str] = {}
+    allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START",
+               "STORAGE_PATH", "SESSION_PATH"}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("key", "")).strip()
+        value = row.get("value")
+        if key in allowed and value is not None:
+            imported[key] = str(value)
+    if not imported:
+        raise RuntimeError("لم يجد Render متغيرات إعداد مدعومة لهذه الخدمة")
+    current = load_settings()
+    reverse = {"API_ID": "api_id", "API_HASH": "api_hash", "BOT_TOKEN": "bot_token",
+               "PHONE": "phone", "ALLOWED_USER_IDS": "allowed_user_ids", "AUTO_START": "auto_start",
+               "STORAGE_PATH": "storage_path", "SESSION_PATH": "session_path"}
+    merged = dict(current)
+    for key, value in imported.items():
+        merged[reverse[key]] = value
+    save_settings(merged)
+    log(f"تم استيراد {len(imported)} إعدادات من Render دون عرض قيمها.")
+    editable = {key: merged[setting] for key, setting in reverse.items() if str(merged.get(setting, "")).strip()}
+    return {"count": len(imported), "keys": sorted(imported), "editable": editable}
+
+
+def sync_render_environment(values: dict[str, Any], api_key: str = "", service_id: str = "") -> list[str]:
+    token = (api_key or os.environ.get("RENDER_API_KEY", "")).strip()
+    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "")).strip()
+    if not token or not service:
+        raise RuntimeError("أدخل Render API Key وService ID للمزامنة")
+    mapping = {
+        "api_id": "API_ID", "api_hash": "API_HASH", "bot_token": "BOT_TOKEN", "phone": "PHONE",
+        "allowed_user_ids": "ALLOWED_USER_IDS", "auto_start": "AUTO_START",
+        "storage_path": "STORAGE_PATH", "session_path": "SESSION_PATH",
+    }
+    updated: list[str] = []
+    for setting, env_key in mapping.items():
+        value = values.get(setting, "")
+        if value is None or value == "":
+            continue
+        request = Request(
+            f"https://api.render.com/v1/services/{service}/env-vars/{env_key}",
+            data=json.dumps({"value": str(value)}).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json",
+                     "Authorization": f"Bearer {token}"},
+            method="PUT",
+        )
+        try:
+            with urlopen(request, timeout=20):
+                updated.append(env_key)
+        except HTTPError as exc:
+            if exc.code in {401, 403}:
+                raise RuntimeError("Render رفض مفتاح API أو لا يملك صلاحية تعديل الخدمة") from exc
+            raise RuntimeError(f"تعذر تحديث {env_key} في Render (HTTP {exc.code})") from exc
+        except (URLError, TimeoutError) as exc:
+            raise RuntimeError("تعذر الاتصال بـ Render أثناء المزامنة") from exc
+    log(f"تمت مزامنة {len(updated)} إعدادات مع Render.")
+    return updated
 def save_bot_allowlist(user_ids: set[int]) -> None:
     current = load_settings()
     current["allowed_user_ids"] = ",".join(str(user_id) for user_id in sorted(user_ids))
@@ -111,6 +194,7 @@ def public_state() -> dict[str, Any]:
         "runtime": {
             "render": IS_RENDER,
             "service_id_set": bool(os.environ.get("RENDER_SERVICE_ID", "").strip()),
+            "render_api_key_set": bool(os.environ.get("RENDER_API_KEY", "").strip()),
             "settings_source": "Render environment" if IS_RENDER else "local environment/file",
         },
         "session": manager.session_snapshot(),
@@ -129,10 +213,10 @@ PAGE = r"""
 <style>
 :root{font-family:"Segoe UI",Tahoma,sans-serif;color:#e8eef7;background:#0f172a}
 *{box-sizing:border-box} body{margin:0;background:#07111f url('/assets/wolf_background.png') center/cover fixed;min-height:100vh;position:relative}body:before{content:"";position:fixed;inset:0;background:linear-gradient(90deg,#07111fee 0%,#07111fcf 48%,#07111f75 100%);pointer-events:none;z-index:0}
-main{position:relative;z-index:1;max-width:1180px;margin:0 auto;margin-right:230px;padding:28px}.side-menu{position:fixed;z-index:2;right:18px;top:18px;bottom:18px;width:190px;padding:18px 12px;background:#0b1425dd;border:1px solid #334a6c;border-radius:20px;backdrop-filter:blur(16px);box-shadow:0 18px 60px #02061788}.side-menu h2{font-size:18px;margin:4px 8px 18px}.side-menu .brand-mark{font-size:30px;color:#8bd8ff;margin:0 8px 4px}.side-menu a{display:block;color:#dbeafe;text-decoration:none;padding:11px 12px;border-radius:10px;margin:5px 0;background:#17243a99;transition:.2s}.side-menu a:hover,.side-menu a:focus{background:#2563eb;color:#fff;transform:translateX(-3px)}.side-menu small{display:block;color:#91a4bd;margin:18px 8px 6px}
+main{position:relative;z-index:1;max-width:1400px;margin:0 auto;margin-right:270px;padding:42px}.side-menu{position:fixed;z-index:2;right:22px;top:22px;bottom:22px;width:225px;padding:24px 16px;background:#0b1425ee;border:1px solid #3b5680;border-radius:24px;backdrop-filter:blur(16px);box-shadow:0 18px 60px #020617aa}.side-menu h2{font-size:21px;margin:6px 10px 22px}.side-menu .brand-mark{font-size:36px;color:#8bd8ff;margin:0 10px 6px}.side-menu a{display:block;color:#dbeafe;text-decoration:none;padding:15px 14px;border-radius:12px;margin:7px 0;background:#17243acc;transition:.2s;font-size:16px}.side-menu a:hover,.side-menu a:focus{background:#2563eb;color:#fff;transform:translateX(-3px)}.side-menu small{display:block;color:#91a4bd;margin:22px 10px 6px;line-height:1.7}
 .hero{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
-h1{margin:0;font-size:30px}.muted{color:#9fb0c7}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#172033;border:1px solid #2c3a52;border-radius:16px;padding:18px;box-shadow:0 12px 40px #02061744}.wide{grid-column:1/-1}.panel{display:none}.panel.active{display:block}.source{font-size:12px;color:#93c5fd;margin-top:8px}
-label{display:block;margin:12px 0 6px;color:#b9c9df}input,button,select{font:inherit;border-radius:10px;border:1px solid #3a4b68;padding:10px;background:#0b1220;color:#eef5ff;width:100%}button{background:#2563eb;border:0;cursor:pointer;font-weight:700}button.secondary{background:#334155}button.danger{background:#b91c1c}.row{display:flex;gap:10px;align-items:end}.row>*{flex:1}.status{padding:10px;border-radius:10px;background:#0b1220;margin:8px 0}.ok{color:#86efac}.warn{color:#fde68a}.err{color:#fca5a5}.progress{height:15px;background:#0b1220;border-radius:20px;overflow:hidden;margin-top:8px}.bar{height:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);width:0;transition:width .2s}.job{border-top:1px solid #334155;padding:12px 0}.job:first-child{border-top:0}.log{font-family:Consolas,monospace;white-space:pre-wrap;background:#070b14;padding:12px;border-radius:10px;max-height:260px;overflow:auto;direction:ltr;text-align:left}.pill{display:inline-block;padding:4px 8px;border-radius:99px;background:#334155;margin:2px;font-size:12px}
+h1{margin:0;font-size:38px}.muted{color:#9fb0c7;font-size:16px;line-height:1.7}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}.card{background:#172033f2;border:1px solid #385070;border-radius:20px;padding:28px;box-shadow:0 14px 46px #02061766}.card h2{font-size:24px;margin-top:0}.wide{grid-column:1/-1}.panel{display:none}.panel.active{display:block}.source{font-size:14px;color:#93c5fd;margin-top:10px}
+label{display:block;margin:18px 0 8px;color:#b9c9df;font-size:16px}input,button,select{font:inherit;border-radius:12px;border:1px solid #3a4b68;padding:14px;background:#0b1220;color:#eef5ff;width:100%;min-height:50px}button{background:#2563eb;border:0;cursor:pointer;font-weight:700}button.secondary{background:#334155}button.danger{background:#b91c1c}.row{display:flex;gap:14px;align-items:end}.row>*{flex:1}.status{padding:14px;border-radius:12px;background:#0b1220;margin:12px 0;line-height:1.7}.ok{color:#86efac}.warn{color:#fde68a}.err{color:#fca5a5}.progress{height:15px;background:#0b1220;border-radius:20px;overflow:hidden;margin-top:8px}.bar{height:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);width:0;transition:width .2s}.job{border-top:1px solid #334155;padding:14px 0}.job:first-child{border-top:0}.log{font-family:Consolas,monospace;white-space:pre-wrap;background:#070b14;padding:14px;border-radius:12px;max-height:300px;overflow:auto;direction:ltr;text-align:left}.pill{display:inline-block;padding:8px 13px;border-radius:99px;background:#334155;margin:2px;font-size:14px}
 @media(max-width:820px){.side-menu{position:relative;right:auto;top:auto;bottom:auto;width:auto;margin:12px;display:flex;gap:6px;overflow:auto}.side-menu h2,.side-menu small,.side-menu .brand-mark{display:none}.side-menu a{white-space:nowrap}.grid{grid-template-columns:1fr}main{margin-right:0;padding:16px}.wide{grid-column:auto}.hero{display:block}}
 </style></head>
 <body><aside class="side-menu"><div class="brand-mark">◈</div><h2>القائمة الرئيسية</h2><a href="#account" onclick="showPanel('account');return false">إعداد الحساب</a><a href="#auth" onclick="showPanel('auth');return false">تسجيل الدخول</a><a href="#download" onclick="showPanel('download');return false">تنزيل رابط</a><a href="#bot" onclick="showPanel('bot');return false">البوت</a><a href="#jobs" onclick="showPanel('jobs');return false">المهام</a><a href="#logs" onclick="showPanel('logs');return false">السجل</a><small>الأسرار تُقرأ من بيئة Render تلقائيًا عند النشر.</small></aside><main>
@@ -141,6 +225,10 @@ label{display:block;margin:12px 0 6px;color:#b9c9df}input,button,select{font:inh
 <div class="grid">
 <section id="account" class="card panel active"><h2>إعداد الحساب</h2>
 <p class="muted">عند التشغيل على Render تُقرأ القيم الموجودة في Environment تلقائيًا. لا تحتاج لإعادة إدخالها هنا.</p>
+<div class="status"><b>استيراد من Render</b><br><span class="muted">أدخل مفتاح Render مرة واحدة في الطلب، أو اضبطه كـ <code>RENDER_API_KEY</code> و<code>RENDER_SERVICE_ID</code> في بيئة الخدمة.</span></div>
+<label>Render Service ID</label><input id="render_service_id" placeholder="srv-... إذا لم يكن مضبوطًا تلقائيًا">
+<label>Render API Key</label><input id="render_api_key" type="password" placeholder="لا يُحفظ ولا يظهر في السجل">
+<div class="row"><button onclick="importRender()">استيراد كل القيم من Render</button><button class="secondary" onclick="syncRender()">حفظ ومزامنة مع Render</button></div><div id="renderImportStatus" class="status">لم يبدأ الاستيراد.</div>
 <label>api_id</label><input id="api_id" placeholder="رقم التطبيق">
 <label>api_hash</label><input id="api_hash" type="password" placeholder="اتركه فارغًا إذا كان محفوظًا">
 <label>Bot Token</label><input id="bot_token" type="password" placeholder="اختياري لتشغيل البوت">
@@ -186,6 +274,8 @@ async function saveSettings(){const body={api_id:api_id.value,api_hash:api_hash.
 async function startSession(){try{await api('/api/session/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind,value:authValue.value})});authValue.value='';refresh()}catch(e){alert(e.message)}}
 async function sendStoredPhone(){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind:'phone',value:''})});refresh()}catch(e){alert(e.message)}}
+async function importRender(){try{const d=await api('/api/render/import',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value})});Object.entries(d.editable||{}).forEach(([key,value])=>{const map={api_id:'api_id',api_hash:'api_hash',bot_token:'bot_token',phone:'phone',allowed_user_ids:'allowed_user_ids',storage_path:'storage_path'};if(map[key])setValue(map[key],value)});render_api_key.value='';document.getElementById('renderImportStatus').textContent='تم استيراد '+d.count+' إعدادات وظهرت القيم في المدخلات.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
+async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,storage_path:storage_path.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});document.getElementById('renderImportStatus').textContent='تمت مزامنة '+d.updated.length+' قيم مع Render. أعد التشغيل إذا طلب Render نشرًا جديدًا.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
 async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء المهمة: '+d.job_id;refresh()}catch(e){alert(e.message)}}
 async function startBot(){try{await api('/api/bot/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function stopBot(){try{await api('/api/bot/stop',{method:'POST'});refresh()}catch(e){alert(e.message)}}
@@ -229,6 +319,35 @@ def api_settings():
     settings = save_settings(payload)
     log("تم حفظ الإعدادات محليًا، وتم إخفاء الأسرار من السجل.")
     return jsonify({"ok": True, "state": public_state()})
+
+
+@app.post("/api/render/import")
+def api_render_import():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = import_render_environment(
+            str(payload.get("api_key", "")),
+            str(payload.get("service_id", "")),
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, **result, "state": public_state()})
+
+
+@app.post("/api/render/sync")
+def api_render_sync():
+    payload = request.get_json(silent=True) or {}
+    try:
+        values = dict(payload.get("values") or {})
+        save_settings(values)
+        updated = sync_render_environment(
+            values,
+            str(payload.get("api_key", "")),
+            str(payload.get("service_id", "")),
+        )
+    except (RuntimeError, TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "updated": updated, "state": public_state()})
 
 
 @app.post("/api/session/start")
