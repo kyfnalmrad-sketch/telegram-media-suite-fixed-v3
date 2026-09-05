@@ -8,6 +8,7 @@ import threading
 import time
 import webbrowser
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 from collections import deque
 from pathlib import Path
@@ -138,12 +139,13 @@ def sync_render_environment(values: dict[str, Any], api_key: str = "", service_i
         "storage_path": "STORAGE_PATH", "session_path": "SESSION_PATH",
     }
     updated: list[str] = []
+    skipped: list[str] = []
     for setting, env_key in mapping.items():
         value = values.get(setting, "")
         if value is None or value == "":
             continue
         request = Request(
-            f"https://api.render.com/v1/services/{service}/env-vars/{env_key}",
+            f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/{quote(env_key, safe='')}",
             data=json.dumps({"value": str(value)}).encode("utf-8"),
             headers={"Accept": "application/json", "Content-Type": "application/json",
                      "Authorization": f"Bearer {token}"},
@@ -153,13 +155,16 @@ def sync_render_environment(values: dict[str, Any], api_key: str = "", service_i
             with urlopen(request, timeout=20):
                 updated.append(env_key)
         except HTTPError as exc:
+            if exc.code == 404:
+                skipped.append(env_key)
+                continue
             if exc.code in {401, 403}:
                 raise RuntimeError("Render رفض مفتاح API أو لا يملك صلاحية تعديل الخدمة") from exc
             raise RuntimeError(f"تعذر تحديث {env_key} في Render (HTTP {exc.code})") from exc
         except (URLError, TimeoutError) as exc:
             raise RuntimeError("تعذر الاتصال بـ Render أثناء المزامنة") from exc
-    log(f"تمت مزامنة {len(updated)} إعدادات مع Render.")
-    return updated
+    log(f"تمت مزامنة {len(updated)} إعدادات مع Render، وتعذر تحديث {len(skipped)}.")
+    return {"updated": updated, "skipped": skipped}
 def save_bot_allowlist(user_ids: set[int]) -> None:
     current = load_settings()
     current["allowed_user_ids"] = ",".join(str(user_id) for user_id in sorted(user_ids))
@@ -275,7 +280,7 @@ async function startSession(){try{await api('/api/session/start',{method:'POST'}
 async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind,value:authValue.value})});authValue.value='';refresh()}catch(e){alert(e.message)}}
 async function sendStoredPhone(){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind:'phone',value:''})});refresh()}catch(e){alert(e.message)}}
 async function importRender(){try{const d=await api('/api/render/import',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value})});Object.entries(d.editable||{}).forEach(([key,value])=>{const map={api_id:'api_id',api_hash:'api_hash',bot_token:'bot_token',phone:'phone',allowed_user_ids:'allowed_user_ids',storage_path:'storage_path'};if(map[key])setValue(map[key],value)});render_api_key.value='';document.getElementById('renderImportStatus').textContent='تم استيراد '+d.count+' إعدادات وظهرت القيم في المدخلات.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
-async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,storage_path:storage_path.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});document.getElementById('renderImportStatus').textContent='تمت مزامنة '+d.updated.length+' قيم مع Render. أعد التشغيل إذا طلب Render نشرًا جديدًا.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
+async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,storage_path:storage_path.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});const skipped=(d.skipped||[]).join(', ');document.getElementById('renderImportStatus').textContent='تمت مزامنة '+(d.updated||[]).length+' قيم'+(skipped?'، تعذر تحديث: '+skipped+' — أضفها كمتغير مباشر في Render.':'')+' .';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
 async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء المهمة: '+d.job_id;refresh()}catch(e){alert(e.message)}}
 async function startBot(){try{await api('/api/bot/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function stopBot(){try{await api('/api/bot/stop',{method:'POST'});refresh()}catch(e){alert(e.message)}}
@@ -347,7 +352,7 @@ def api_render_sync():
         )
     except (RuntimeError, TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "updated": updated, "state": public_state()})
+    return jsonify({"ok": True, **updated, "state": public_state()})
 
 
 @app.post("/api/session/start")

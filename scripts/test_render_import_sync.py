@@ -42,7 +42,8 @@ with patch.object(web_app, 'urlopen', side_effect=fake_urlopen):
         {'api_id': '12345', 'api_hash': 'hash-value', 'bot_token': 'bot-value', 'phone': '+10000000000'},
         'render-key', 'srv-test'
     )
-    assert updated == ['API_ID', 'API_HASH', 'BOT_TOKEN', 'PHONE']
+    assert updated['updated'] == ['API_ID', 'API_HASH', 'BOT_TOKEN', 'PHONE']
+    assert updated['skipped'] == []
     assert len(calls) == 4
     assert calls[0][0] == 'PUT'
 
