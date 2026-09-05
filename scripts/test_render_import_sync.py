@@ -30,7 +30,7 @@ env_payload = [
 with patch.object(web_app, 'urlopen', return_value=FakeResponse(env_payload)):
     result = web_app.import_render_environment('render-key', 'srv-test')
     assert result['count'] == 5
-    assert result['editable']['API_HASH'] == 'hash-value'
+    assert result['editable']['api_hash'] == 'hash-value'
 
 calls = []
 def fake_urlopen(request, timeout=20):

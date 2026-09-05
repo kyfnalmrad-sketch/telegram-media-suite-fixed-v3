@@ -85,7 +85,7 @@ manager = DownloadManager(log=log)
 def import_render_environment(api_key: str = "", service_id: str = "") -> dict[str, Any]:
     """Fetch service env vars from Render without exposing them in the response."""
     token = (api_key or os.environ.get("RENDER_API_KEY", "")).strip()
-    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "")).strip()
+    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "") or load_settings().get("render_service_id", "")).strip()
     if not token or not service:
         raise RuntimeError("أدخل Render API Key وService ID أو اضبطهما في Environment")
     request = Request(
@@ -104,8 +104,7 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
         raise RuntimeError("تعذر الاتصال بـ Render أو قراءة استجابته") from exc
     rows = payload if isinstance(payload, list) else payload.get("envVars", payload.get("items", []))
     imported: dict[str, str] = {}
-    allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START",
-               "STORAGE_PATH", "SESSION_PATH"}
+    allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START"}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
@@ -120,23 +119,23 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
                "PHONE": "phone", "ALLOWED_USER_IDS": "allowed_user_ids", "AUTO_START": "auto_start",
                "STORAGE_PATH": "storage_path", "SESSION_PATH": "session_path"}
     merged = dict(current)
+    merged["render_service_id"] = service
     for key, value in imported.items():
         merged[reverse[key]] = value
     save_settings(merged)
     log(f"تم استيراد {len(imported)} إعدادات من Render دون عرض قيمها.")
-    editable = {key: merged[setting] for key, setting in reverse.items() if str(merged.get(setting, "")).strip()}
+    editable = {setting: merged[setting] for key, setting in reverse.items() if key in allowed and str(merged.get(setting, "")).strip()}
     return {"count": len(imported), "keys": sorted(imported), "editable": editable}
 
 
-def sync_render_environment(values: dict[str, Any], api_key: str = "", service_id: str = "") -> list[str]:
+def sync_render_environment(values: dict[str, Any], api_key: str = "", service_id: str = "") -> dict[str, list[str]]:
     token = (api_key or os.environ.get("RENDER_API_KEY", "")).strip()
-    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "")).strip()
+    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "") or load_settings().get("render_service_id", "")).strip()
     if not token or not service:
         raise RuntimeError("أدخل Render API Key وService ID للمزامنة")
     mapping = {
         "api_id": "API_ID", "api_hash": "API_HASH", "bot_token": "BOT_TOKEN", "phone": "PHONE",
         "allowed_user_ids": "ALLOWED_USER_IDS", "auto_start": "AUTO_START",
-        "storage_path": "STORAGE_PATH", "session_path": "SESSION_PATH",
     }
     updated: list[str] = []
     skipped: list[str] = []
@@ -195,6 +194,7 @@ def public_state() -> dict[str, Any]:
             "session_path": current.get("session_path", ""),
             "allowed_user_ids": current.get("allowed_user_ids", ""),
             "auto_start": bool(current.get("auto_start", False)),
+            "render_service_id": current.get("render_service_id", ""),
         },
         "runtime": {
             "render": IS_RENDER,
@@ -233,7 +233,7 @@ label{display:block;margin:18px 0 8px;color:#b9c9df;font-size:16px}input,button,
 <div class="status"><b>استيراد من Render</b><br><span class="muted">أدخل مفتاح Render مرة واحدة في الطلب، أو اضبطه كـ <code>RENDER_API_KEY</code> و<code>RENDER_SERVICE_ID</code> في بيئة الخدمة.</span></div>
 <label>Render Service ID</label><input id="render_service_id" placeholder="srv-... إذا لم يكن مضبوطًا تلقائيًا">
 <label>Render API Key</label><input id="render_api_key" type="password" placeholder="لا يُحفظ ولا يظهر في السجل">
-<div class="row"><button onclick="importRender()">استيراد كل القيم من Render</button><button class="secondary" onclick="syncRender()">حفظ ومزامنة مع Render</button></div><div id="renderImportStatus" class="status">لم يبدأ الاستيراد.</div>
+<div class="row"><button onclick="importRender()">استيراد القيم المطلوبة من Render</button><button class="secondary" onclick="syncRender()">حفظ ومزامنة مع Render</button></div><div id="renderImportStatus" class="status">لم يبدأ الاستيراد.</div>
 <label>api_id</label><input id="api_id" placeholder="رقم التطبيق">
 <label>api_hash</label><input id="api_hash" type="password" placeholder="اتركه فارغًا إذا كان محفوظًا">
 <label>Bot Token</label><input id="bot_token" type="password" placeholder="اختياري لتشغيل البوت">
@@ -270,7 +270,7 @@ function showPanel(id){document.querySelectorAll('.panel').forEach(e=>e.classLis
 async function api(url, options={}){const r=await fetch(url,{headers:{'Content-Type':'application/json'},...options});const d=await r.json();if(!r.ok)throw new Error(d.error||'خطأ غير معروف');return d}
 function setValue(id,v){const e=document.getElementById(id);if(v!==undefined&&v!==null)e.value=v}
 function render(s){state=s;const ss=s.session||{};document.getElementById('sessionStatus').textContent='حالة الجلسة: '+ss.state+(ss.error?' — '+ss.error:'');document.getElementById('botStatus').textContent='حالة البوت: '+(s.bot||{}).status;
- setValue('api_id',s.settings.api_id);setValue('chat_id',s.settings.chat_id);setValue('storage_path',s.settings.storage_path);setValue('allowed_user_ids',s.settings.allowed_user_ids);document.getElementById('auto_start').checked=!!s.settings.auto_start;document.getElementById('runtimeSource').textContent='مصدر الإعداد: '+((s.runtime||{}).settings_source||'غير معروف')+' — API ID '+(s.settings.api_id_set?'موجود':'غير مضبوط');
+ setValue('api_id',s.settings.api_id);setValue('render_service_id',s.settings.render_service_id);setValue('chat_id',s.settings.chat_id);setValue('storage_path',s.settings.storage_path);setValue('allowed_user_ids',s.settings.allowed_user_ids);document.getElementById('auto_start').checked=!!s.settings.auto_start;document.getElementById('runtimeSource').textContent='مصدر الإعداد: '+((s.runtime||{}).settings_source||'غير معروف')+' — API ID '+(s.settings.api_id_set?'موجود':'غير مضبوط');
 const jobs=Object.values(s.jobs||{});document.getElementById('jobsList').innerHTML=jobs.length?jobs.map(j=>{const p=j.total?Math.floor(j.downloaded*100/j.total):0;return `<div class="job"><b>${j.status}</b> — ${j.file||j.link}<div class="progress"><div class="bar" style="width:${p}%"></div></div><span class="muted">${j.downloaded||0} / ${j.total||0} bytes</span>${j.error?`<div class="err">${j.error}</div>`:''}</div>`}).join(''):'لا توجد مهام.';
 document.getElementById('logsBox').textContent=(s.logs||[]).join('\n')||'لا يوجد سجل بعد.';
 const prompt=ss.state==='phone'?'أدخل رقم الهاتف ثم أرسل':ss.state==='code'?'أدخل رمز Telegram ثم أرسل':ss.state==='password'?'أدخل كلمة مرور التحقق بخطوتين ثم أرسل':'لا توجد مطالبة حاليًا.';document.getElementById('authPrompt').textContent=prompt;document.getElementById('topStatus').textContent=ss.state==='ready'?'الجلسة جاهزة':(s.bot||{}).status==='running'?'البوت يعمل':'جاهز'}
@@ -280,7 +280,7 @@ async function startSession(){try{await api('/api/session/start',{method:'POST'}
 async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind,value:authValue.value})});authValue.value='';refresh()}catch(e){alert(e.message)}}
 async function sendStoredPhone(){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind:'phone',value:''})});refresh()}catch(e){alert(e.message)}}
 async function importRender(){try{const d=await api('/api/render/import',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value})});Object.entries(d.editable||{}).forEach(([key,value])=>{const map={api_id:'api_id',api_hash:'api_hash',bot_token:'bot_token',phone:'phone',allowed_user_ids:'allowed_user_ids',storage_path:'storage_path'};if(map[key])setValue(map[key],value)});render_api_key.value='';document.getElementById('renderImportStatus').textContent='تم استيراد '+d.count+' إعدادات وظهرت القيم في المدخلات.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
-async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,storage_path:storage_path.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});const skipped=(d.skipped||[]).join(', ');document.getElementById('renderImportStatus').textContent='تمت مزامنة '+(d.updated||[]).length+' قيم'+(skipped?'، تعذر تحديث: '+skipped+' — أضفها كمتغير مباشر في Render.':'')+' .';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
+async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,render_service_id:render_service_id.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});const skipped=(d.skipped||[]).join(', ');document.getElementById('renderImportStatus').textContent='تمت مزامنة '+(d.updated||[]).length+' قيم'+(skipped?'، تعذر تحديث: '+skipped+' — أضفها كمتغير مباشر في Render.':'')+' .';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
 async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء المهمة: '+d.job_id;refresh()}catch(e){alert(e.message)}}
 async function startBot(){try{await api('/api/bot/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function stopBot(){try{await api('/api/bot/stop',{method:'POST'});refresh()}catch(e){alert(e.message)}}

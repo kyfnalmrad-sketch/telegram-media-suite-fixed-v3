@@ -17,6 +17,7 @@ DEFAULTS: dict[str, Any] = {
     "session_path": str(APP_DIR / "sessions"),
     "allowed_user_ids": "",
     "auto_start": False,
+    "render_service_id": "srv-dac9q2mk1f9s73brjvr0",
 }
 SECRET_KEYS = {"api_hash", "bot_token", "phone"}
 ENV_NAMES = {
@@ -28,6 +29,7 @@ ENV_NAMES = {
     "session_path": "SESSION_PATH",
     "allowed_user_ids": "ALLOWED_USER_IDS",
     "auto_start": "AUTO_START",
+    "render_service_id": "RENDER_SERVICE_ID",
 }
 
 
