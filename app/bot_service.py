@@ -516,7 +516,7 @@ class TelegramBotService:
                 text = text[10:].strip()
             links = self._extract_links(text)
             if links:
-                await self._download_many(message, links)
+                await self._ask_download_consent(message, "links", links)
             else:
                 await message.reply_text("أرسل /start لعرض القائمة، أو اختر زرًا من لوحة الأزرار.", reply_markup=self._reply_keyboard())
 
@@ -534,7 +534,7 @@ class TelegramBotService:
             if mode == "info":
                 await self._send_info_many(message, links)
             else:
-                await self._download_many(message, links)
+                await self._ask_download_consent(message, "links", links)
             return
         if mode == "channel_link":
             links = self._extract_links(text)
@@ -812,14 +812,66 @@ class TelegramBotService:
             elif data in {"cancel", "menu", "start"}:
                 self.user_flows.pop(user_id, None)
                 await query.message.reply_text("اختر العملية:", reply_markup=self._reply_keyboard())
+            elif data == "download_consent_yes":
+                await self._accept_download_consent(query.message, user_id)
+            elif data == "download_consent_no":
+                self.user_flows.pop(user_id, None)
+                await query.message.reply_text("تم إلغاء التنزيل ولم يبدأ أي ملف.", reply_markup=self._reply_keyboard())
             elif data.startswith("range_all:"):
-                await self._download_pending_range(query.message, data.split(":", 1)[1])
+                await self._ask_download_consent(query.message, "pending_range", data.split(":", 1)[1], user_id=user_id)
             elif data.startswith("range_one:"):
                 parts = data.split(":")
                 if len(parts) == 3 and parts[2].isdigit():
-                    await self._download_pending_one(query.message, parts[1], int(parts[2]))
+                    await self._ask_download_consent(
+                        query.message, "pending_one", (parts[1], int(parts[2])), user_id=user_id
+                    )
 
         return CallbackQueryHandler(callback)
+
+    async def _ask_download_consent(self, message: Any, action: str, payload: Any,
+                                    user_id: int | None = None) -> None:
+        """Ask for explicit consent immediately before starting a download."""
+        user_id = int(user_id or message.from_user.id)
+        if action == "links":
+            count = len(payload)
+            description = f"{count} رابط" if count == 1 else f"{count} روابط"
+        elif action == "pending_range":
+            description = "الملفات الناجحة من نتيجة الفحص"
+        else:
+            description = "الملف المحدد من نتيجة الفحص"
+        self.user_flows[user_id] = {
+            "mode": "download_consent",
+            "action": action,
+            "payload": payload,
+            "created_at": time.time(),
+        }
+        await message.reply_text(
+            f"هل تريد تنزيل {description} الآن؟\nلن يبدأ التنزيل إلا بعد موافقتك.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("نعم، أوافق", callback_data="download_consent_yes"),
+                 InlineKeyboardButton("لا، إلغاء", callback_data="download_consent_no")],
+            ]),
+        )
+
+    async def _accept_download_consent(self, message: Any, user_id: int) -> None:
+        flow = self.user_flows.get(user_id) or {}
+        if flow.get("mode") != "download_consent":
+            await message.reply_text("انتهت صلاحية طلب الموافقة. أرسل رابط التنزيل من جديد.", reply_markup=self._reply_keyboard())
+            return
+        if time.time() - float(flow.get("created_at", 0)) > self.pending_ttl_seconds:
+            self.user_flows.pop(user_id, None)
+            await message.reply_text("انتهت صلاحية طلب الموافقة. أرسل رابط التنزيل من جديد.", reply_markup=self._reply_keyboard())
+            return
+        self.user_flows.pop(user_id, None)
+        action, payload = flow.get("action"), flow.get("payload")
+        if action == "links":
+            await self._download_many(message, list(payload or []))
+        elif action == "pending_range":
+            await self._download_pending_range(message, str(payload), user_id=user_id)
+        elif action == "pending_one" and isinstance(payload, (list, tuple)) and len(payload) == 2:
+            await self._download_pending_one(message, str(payload[0]), int(payload[1]), user_id=user_id)
+        else:
+            await message.reply_text("بيانات التنزيل غير صالحة. أعد الفحص ثم حاول مرة أخرى.", reply_markup=self._reply_keyboard())
 
     async def _send_info_many(self, message: Any, links: list[str]) -> None:
         if len(links) == 1:
@@ -1210,8 +1262,9 @@ class TelegramBotService:
         except Exception as exc:
             await message.reply_text(self._error_report(exc, "قراءة النطاق الزمني"), reply_markup=self._reply_keyboard())
 
-    async def _download_pending_one(self, message: Any, token: str, message_id: int) -> None:
-        pending = self._get_pending(token, message.from_user.id)
+    async def _download_pending_one(self, message: Any, token: str, message_id: int,
+                                    user_id: int | None = None) -> None:
+        pending = self._get_pending(token, int(user_id or message.from_user.id))
         if not pending:
             await message.reply_text("انتهت صلاحية الاختيار أو لم يعد متاحًا. أرسل «ابدأ» لفحص جديد.", reply_markup=self._reply_keyboard())
             return
@@ -1231,8 +1284,9 @@ class TelegramBotService:
                 return
         await message.reply_text("الرسالة غير موجودة في الاختيار الحالي.")
 
-    async def _download_pending_range(self, message: Any, token: str) -> None:
-        pending = self._get_pending(token, message.from_user.id)
+    async def _download_pending_range(self, message: Any, token: str,
+                                      user_id: int | None = None) -> None:
+        pending = self._get_pending(token, int(user_id or message.from_user.id))
         if not pending:
             await message.reply_text("انتهت صلاحية الاختيار أو لم يعد متاحًا. أرسل «ابدأ» لفحص جديد.", reply_markup=self._reply_keyboard())
             return
