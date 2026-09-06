@@ -10,6 +10,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 from .UserBot.saver import cleanup, inspect_media, saver
 from .job_queue import queue
+from .media_upload import resolve_upload_path
 from .errors import explain_error
 from .start import menu
 from .ui_state import CONTROL_MESSAGES
@@ -62,6 +63,7 @@ async def process_job(bot: Client, job: dict) -> None:
         details = f"\n\nالمصدر: {source}\nرقم الرسالة: {job['message_id']}\nرقم العملية: #{job['id']}"
         caption = (caption + details)[:1024]
         queue.update(job["id"], phase="جاري إرسال الوسائط إلى البوت", status="uploading", progress=0)
+        upload_path = resolve_upload_path(result)
         last_update = 0.0
 
         def upload_progress(current: int, total: int):
@@ -75,16 +77,20 @@ async def process_job(bot: Client, job: dict) -> None:
             queue.update(job["id"], progress=int(current * 100 / total) if total else 0, current=current, total=total)
             asyncio.create_task(status.edit_text(progress_text("📤 جاري إرسال الوسائط إلى البوت...", current, total)))
 
-        if result["type"] == "video":
-            await bot.send_video(job["chat_id"], result["path"], caption=caption, supports_streaming=True, progress=upload_progress)
-        elif result["type"] == "audio":
-            await bot.send_audio(job["chat_id"], result["path"], caption=caption, progress=upload_progress)
-        elif result["type"] == "photo":
-            await bot.send_photo(job["chat_id"], result["path"], caption=caption)
-        elif result["type"] == "voice":
-            await bot.send_voice(job["chat_id"], result["path"], caption=caption, progress=upload_progress)
-        else:
-            await bot.send_document(job["chat_id"], result["path"], caption=caption, progress=upload_progress)
+        # Use an open handle so Pyrogram cannot mistake an unavailable path
+        # for a Telegram file id. The handle also keeps the file available for
+        # the complete upload, including large files on Render's /tmp volume.
+        with upload_path.open("rb") as media_file:
+            if result["type"] == "video":
+                await bot.send_video(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, supports_streaming=True, progress=upload_progress)
+            elif result["type"] == "audio":
+                await bot.send_audio(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
+            elif result["type"] == "photo":
+                await bot.send_photo(job["chat_id"], media_file, caption=caption)
+            elif result["type"] == "voice":
+                await bot.send_voice(job["chat_id"], media_file, caption=caption, progress=upload_progress)
+            else:
+                await bot.send_document(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
         queue.update(job["id"], status="completed", phase="اكتمل — جاهز للمشاهدة والتنزيل", progress=100)
         await status.edit_text(f"✅ اكتملت العملية #{job['id']}\nالوسائط جاهزة للمشاهدة أو الحفظ من رسالة Telegram.")
     except Exception as exc:
