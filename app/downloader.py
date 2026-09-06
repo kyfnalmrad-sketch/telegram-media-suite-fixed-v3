@@ -729,19 +729,20 @@ async def fetch_and_download_media(
     output_dir: str = "./downloads",
     progress_callback: Any = None,
 ) -> Optional[str]:
-    """جلب الرسالة وتنزيل الوسائط منها بأسلوب مباشر ومستقر."""
+    """تحليل الرابط، التأكد من الانضمام والكاش، ثم تنزيل الوسائط."""
     from bot_service import ensure_peer_resolved, parse_message_link
 
     chat_ref, message_id = parse_message_link(link)
     if not chat_ref or not message_id:
         raise ValueError("صيغة الرابط غير صحيحة")
 
-    if isinstance(chat_ref, int):
-        await ensure_peer_resolved(user_client, chat_ref)
+    # التحقق من الانضمام وتحديث الكاش تلقائيًا قبل جلب الرسالة.
+    await ensure_peer_resolved(user_client, chat_ref)
 
+    # جلب الرسالة بمرجع حديث.
     message = await user_client.get_messages(chat_ref, message_id)
     if not message or getattr(message, "empty", True) or not message.media:
-        raise ValueError("الرسالة غير متاحة أو لا تحتوي على وسائط")
+        raise ValueError("الرسالة غير متاحة أو لا تحتوي على وسائط قابلة للتنزيل")
 
     os.makedirs(output_dir, exist_ok=True)
     return await user_client.download_media(
