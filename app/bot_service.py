@@ -573,10 +573,10 @@ class TelegramBotService:
                 flow["accessible_without_membership"] = True
                 flow["mode"] = "channel_membership"
                 await message.reply_text(
-                    "هل أنت مشترك في هذه القناة؟ أجب بـ «نعم» أو «لا».\n\n"
-                    "هذا السؤال للتأكد من أن الحساب الشخصي يستطيع قراءة القناة الخاصة. إذا كانت القناة عامة فسيحاول النظام التحقق من الوصول مباشرة.",
+                    "هل أنت مضاف إلى هذه القناة بالحساب الشخصي؟\n\n"
+                    "اضغط «نعم، أنا مضاف» إذا كان الحساب الشخصي عضوًا فيها، أو «لا، لست مضافًا» إذا لم يكن كذلك.",
                     reply_markup=ReplyKeyboardMarkup(
-                        [[KeyboardButton("نعم"), KeyboardButton("لا")], [KeyboardButton("عودة")]],
+                        [[KeyboardButton("نعم، أنا مضاف"), KeyboardButton("لا، لست مضافًا")], [KeyboardButton("عودة")]],
                         resize_keyboard=True,
                         one_time_keyboard=False,
                     ),
@@ -586,10 +586,12 @@ class TelegramBotService:
             return
         if mode == "channel_membership":
             answer = text.casefold()
-            if answer not in {"نعم", "لا", "yes", "no"}:
-                await message.reply_text("أجب بـ «نعم» أو «لا» حتى أتحقق من الوصول إلى القناة.", reply_markup=self._reply_keyboard())
+            yes_answers = {"نعم", "yes", "نعم، أنا مضاف", "نعم انا مضاف", "نعم، أنا مشترك", "نعم انا مشترك"}
+            no_answers = {"لا", "no", "لا، لست مضافًا", "لا لست مضافا", "لا، لست مشتركًا", "لا لست مشتركا"}
+            if answer not in yes_answers | no_answers:
+                await message.reply_text("استخدم زر «نعم، أنا مضاف» أو «لا، لست مضافًا» للمتابعة.", reply_markup=self._reply_keyboard())
                 return
-            if answer in {"لا", "no"}:
+            if answer in no_answers:
                 if flow.get("accessible_without_membership"):
                     flow["mode"] = "channel_choice"
                     await message.reply_text(
