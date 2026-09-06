@@ -211,12 +211,15 @@ class TelegramBotService:
     def _error_report(exc: Exception, operation: str) -> str:
         name = type(exc).__name__
         detail = str(exc).strip().lower()
-        if isinstance(exc, ValueError) and ("غير موجود" in str(exc) or "not found" in detail):
+        if isinstance(exc, ValueError) and ("تعذر الوصول" in str(exc) or "لا يمكن الوصول" in str(exc) or "access" in detail):
+            cause = "تعذر الوصول إلى القناة أو الرسالة بالحساب الشخصي الحالي."
+            fix = "تأكد أن الحساب الشخصي المربوط بالجلسة عضو في القناة، وافتح القناة منه مرة واحدة ثم أعد إرسال الرابط."
+        elif isinstance(exc, ValueError) and ("غير موجود" in str(exc) or "not found" in detail):
             cause = "الرسالة أو القناة المطلوبة غير موجودة، أو لم تعد متاحة."
             fix = "انسخ الرابط من Telegram من جديد، وتأكد من أن الرسالة لم تُحذف وأن الحساب يستطيع فتح القناة."
         elif isinstance(exc, ValueError):
-            cause = "صيغة الرابط أو البيانات المدخلة غير صحيحة."
-            fix = "أرسل رابطًا بصيغة https://t.me/channel أو https://t.me/channel/123، وتأكد من الأرقام المطلوبة."
+            cause = f"رفض محلل Telegram الرابط أو البيانات: {str(exc)[:240]}"
+            fix = "أرسل رابط قناة أو رسالة كاملًا من Telegram، مثل https://t.me/c/123456789/45 أو رابط الدعوة، ثم أعد المحاولة."
         elif isinstance(exc, RuntimeError) and ("عضو" in str(exc) or "مشترك" in str(exc)):
             cause = "الحساب المستخدم لا يملك وصولًا إلى المصدر المطلوب."
             fix = "تحقق من الحساب المستخدم للوصول إلى المصدر، ثم أعد المحاولة."
@@ -543,7 +546,7 @@ class TelegramBotService:
                 normalized = text if "://" in text else "https://" + text
                 parsed_input = urlparse(normalized)
                 path_parts = [part for part in parsed_input.path.split("/") if part]
-                if path_parts and path_parts[0] == "s":
+                if path_parts and path_parts[0].casefold() == "s":
                     path_parts = path_parts[1:]
                 is_invite = bool(path_parts and (path_parts[0].startswith("+") or path_parts[0] == "joinchat"))
                 is_message_link = not is_invite and len(path_parts) >= 2 and path_parts[-1].isdigit()
