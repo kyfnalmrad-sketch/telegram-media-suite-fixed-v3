@@ -1,6 +1,8 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from .ui_state import CONTROL_MESSAGES
+
 
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -12,18 +14,29 @@ def menu() -> InlineKeyboardMarkup:
 
 @Client.on_message(filters.private & filters.command("start"))
 async def start(_: Client, message: Message):
-    await message.reply_text(
-        "أهلًا بك. أرسل رابط Telegram مباشرة أو اضغط «انزل الوسائط».\n"
+    control = await message.reply_text(
+        "أهلًا بك. هذه لوحة التحكم.\n"
+        "أرسل رابط Telegram مباشرة أو اضغط «انزل الوسائط».\n"
         "يدعم الفيديو والصوت والصور والمستندات وPDF، ويعالج الروابط بالتسلسل.",
         reply_markup=menu(),
     )
+    CONTROL_MESSAGES[message.chat.id] = control.id
 
 
 @Client.on_message(filters.private & filters.command("help"))
-async def help_command(_: Client, message: Message):
-    await message.reply_text(
-        "أرسل رابط رسالة Telegram مباشرة أو استخدم /save <الرابط>.\n"
-        "الملف يصل كرسالة Telegram عادية لتشاهده أو تحفظه من جهازك.\n"
-        "زر «إيقاف الجديد» يوقف بدء عمليات جديدة، والاستئناف يعيد الطابور.",
-        reply_markup=menu(),
-    )
+async def help_command(bot: Client, message: Message):
+    control_id = CONTROL_MESSAGES.get(message.chat.id)
+    if control_id:
+        try:
+            await bot.edit_message_text(
+                message.chat.id,
+                control_id,
+                "أرسل رابط رسالة Telegram مباشرة أو استخدم /save <الرابط>.\n"
+                "سيصل الملف كرسالة Telegram عادية لتشاهده أو تحفظه من جهازك.",
+                reply_markup=menu(),
+            )
+            return
+        except Exception:
+            pass
+    control = await message.reply_text("أرسل رابط Telegram مباشرة.", reply_markup=menu())
+    CONTROL_MESSAGES[message.chat.id] = control.id

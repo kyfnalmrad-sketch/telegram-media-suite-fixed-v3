@@ -10,6 +10,8 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 from .UserBot.saver import cleanup, inspect_media, saver
 from .job_queue import queue
+from .start import menu
+from .ui_state import CONTROL_MESSAGES
 
 LINK_RE = re.compile(r"https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>]+", re.I)
 
@@ -107,7 +109,12 @@ async def enqueue_link(bot: Client, message: Message, link: str) -> None:
     source = getattr(getattr(info["message"], "chat", None), "title", None) or getattr(getattr(info["message"], "chat", None), "username", None) or str(parsed[0])
     caption = (info.get("caption") or "بدون وصف")[:500]
     queue.update(job["id"], media_type=info["type"], size=info["size"], source=source, caption=caption)
-    status = await message.reply_text(
+    control_id = CONTROL_MESSAGES.get(message.chat.id)
+    status = await bot.get_messages(message.chat.id, control_id) if control_id else None
+    if not status or status.empty:
+        status = await message.reply_text("لوحة العمليات", reply_markup=menu())
+        CONTROL_MESSAGES[message.chat.id] = status.id
+    await status.edit_text(
         f"🔎 تم تحليل العملية #{job['id']}\n"
         f"النوع: {info['type']}\nالحجم: {size_mb:.2f} MB\n"
         f"المصدر: {source}\nرقم الرسالة: {parsed[1]}\n"
@@ -141,7 +148,10 @@ async def fetch_job(bot: Client, query: CallbackQuery):
 @Client.on_callback_query(filters.regex("^download_video$"))
 async def download_button(_: Client, query: CallbackQuery):
     await query.answer()
-    await query.message.reply_text("أرسل رابط الوسائط من Telegram الآن. يدعم الفيديو والصوت والصور والمستندات وPDF.")
+    await query.message.edit_text(
+        "أرسل رابط الوسائط من Telegram الآن. يدعم الفيديو والصوت والصور والمستندات وPDF.",
+        reply_markup=menu(),
+    )
 
 
 @Client.on_callback_query(filters.regex("^queue:(pause|resume|list)$"))
