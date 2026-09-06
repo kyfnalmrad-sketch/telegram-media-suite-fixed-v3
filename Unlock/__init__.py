@@ -52,22 +52,32 @@ def restore_render_session() -> Path | None:
     return path
 
 
-if not all((API_ID, API_HASH, BOT_TOKEN)):
-    raise RuntimeError("Render يحتاج API_ID وAPI_HASH وBOT_TOKEN")
-try:
-    API_ID = int(API_ID)
-except (TypeError, ValueError) as exc:
-    raise RuntimeError("API_ID يجب أن يكون رقمًا") from exc
+def require_clients() -> tuple[Client, Client]:
+    """Build the Telegram clients only when the bot process is actually started.
 
-session_file = restore_render_session()
-if not SESSION_STRING and session_file is None:
-    raise RuntimeError("Render يحتاج SESSION_STRING أو TMD_SESSION_B64 لجلسة الحساب الشخصي")
+    Keeping imports side-effect free lets unit tests exercise pure helper modules
+    without requiring production secrets, while startup still fails early with a
+    clear configuration error when credentials are missing.
+    """
+    if not all((API_ID, API_HASH, BOT_TOKEN)):
+        raise RuntimeError("Render يحتاج API_ID وAPI_HASH وBOT_TOKEN")
+    try:
+        api_id = int(API_ID)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("API_ID يجب أن يكون رقمًا") from exc
+    session_file = restore_render_session()
+    if not SESSION_STRING and session_file is None:
+        raise RuntimeError("Render يحتاج SESSION_STRING أو TMD_SESSION_B64 لجلسة الحساب الشخصي")
+    bot = Client("Unlock", api_id=api_id, api_hash=API_HASH, bot_token=BOT_TOKEN, plugins={"root": "Unlock.modules"}, workdir=str(DATA_DIR))
+    if SESSION_STRING:
+        user = Client("UserBot", api_id=api_id, api_hash=API_HASH, session_string=SESSION_STRING, plugins={"root": "Unlock.modules.UserBot"})
+    else:
+        user = Client("UserBot", api_id=api_id, api_hash=API_HASH, plugins={"root": "Unlock.modules.UserBot"}, workdir=str(SESSION_DIR))
+    return bot, user
 
-rbot = Client("Unlock", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, plugins={"root": "Unlock.modules"}, workdir=str(DATA_DIR))
-if SESSION_STRING:
-    ubot = Client("UserBot", api_id=API_ID, api_hash=API_HASH, session_string=SESSION_STRING, plugins={"root": "Unlock.modules.UserBot"})
-else:
-    ubot = Client("UserBot", api_id=API_ID, api_hash=API_HASH, plugins={"root": "Unlock.modules.UserBot"}, workdir=str(SESSION_DIR))
+
+rbot: Client | None = None
+ubot: Client | None = None
 
 _size_limit = os.getenv("ALLOWED_DOWNLOAD_SIZE", "").strip()
 # The empty/default configuration accepts media up to 5 GiB; deployments can

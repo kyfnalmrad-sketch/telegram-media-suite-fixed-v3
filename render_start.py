@@ -29,6 +29,7 @@ DATA_DIR = Path(os.getenv("TMD_SUITE_DATA", "/opt/render/project/src/.tmd-data")
 SESSION_DIR = DATA_DIR / "sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_FILE = SESSION_DIR / "UserBot.session"
+_SESSION_REVOKED = False
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
 _bot_started_at: float | None = None
@@ -148,6 +149,20 @@ class SessionSetup:
             future = self._submit(self.client.disconnect())
             future.result(timeout=15)
 
+    def reset(self):
+        """Close the setup client and remove the locally cached session."""
+        self.close()
+        with self._lock:
+            self.client = None
+            self.phone = ""
+            self._phone_code_hash = ""
+            self.state = "idle"
+            self.error = ""
+        try:
+            SESSION_FILE.unlink(missing_ok=True)
+        except OSError as exc:
+            raise RuntimeError(f"تعذر حذف ملف الجلسة المحلي: {exc}") from exc
+
 
 setup = SessionSetup()
 
@@ -194,8 +209,10 @@ def service_snapshot() -> dict:
         counts[status] = counts.get(status, 0) + 1
     bot = bot_process_snapshot()
     session = setup.snapshot()
-    source_configured = bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING", "TMD_SESSION_B64") or SESSION_FILE.exists())
+    source_configured = bool(not _SESSION_REVOKED and (env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING", "TMD_SESSION_B64") or SESSION_FILE.exists()))
     if session.get("state") == "idle" and source_configured:
+        session["state"] = "configured"
+    if bot["running"]:
         session["state"] = "ready"
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -248,7 +265,7 @@ def dashboard():
 <body><main class="wrap">
 <header class="header"><div class="brand"><h1>Telegram Media Suite</h1><p><span id="botDot" class="dot"></span>لوحة العمليات والمراقبة الحية</p></div><div id="lastUpdate" class="hint">آخر تحديث: —</div></header>
 <section class="grid"><div class="card"><div class="label">خدمة Render</div><div id="renderState" class="value">جارٍ التحقق</div><div id="renderMeta" class="hint">—</div></div><div class="card"><div class="label">حالة البوت</div><div id="botState" class="value">جارٍ التحقق</div><div id="botMeta" class="hint">—</div></div><div class="card"><div class="label">عامل العمليات</div><div id="workerState" class="value">—</div><div id="workerMeta" class="hint">—</div></div><div class="card"><div class="label">جلسة Telegram</div><div id="sessionState" class="value">—</div><div id="sessionMeta" class="hint">—</div></div><div class="card"><div class="label">تخزين الحالة</div><div id="storageState" class="value">—</div><div id="storageMeta" class="hint">—</div></div><div class="card"><div class="label">العمليات الجارية</div><div id="activeCount" class="value">0</div><div id="totalCount" class="hint">إجمالي: 0</div></div></section>
-<section class="panel"><h2>إعداد الجلسة وتشغيل البوت</h2><p class="hint">رقم الهاتف المضبوط في Render: <b>__PHONE__</b></p><div class="forms"><div class="formbox"><h3>1. بدء جلسة Telegram</h3><button onclick="startSession()">بدء إرسال الكود</button><input id="code" inputmode="numeric" placeholder="كود Telegram" autocomplete="one-time-code"><button onclick="submitCode()">تحقق من الكود</button><input id="password" type="password" placeholder="كلمة مرور التحقق بخطوتين"><button onclick="submitPassword()">تحقق من كلمة المرور</button></div><div class="formbox"><h3>2. الترحيل والتشغيل</h3><p class="hint">بعد نجاح الجلسة اضغط ترحيل الجلسة، ثم شغّل البوت.</p><div class="actions"><button onclick="transfer()">ترحيل الجلسة</button><button onclick="startBot()">تشغيل البوت</button></div><p id="result"></p></div></div></section>
+<section class="panel"><h2>إعداد الجلسة وتشغيل البوت</h2><p class="hint">رقم الهاتف المضبوط في Render: <b>__PHONE__</b></p><div class="forms"><div class="formbox"><h3>1. بدء جلسة Telegram</h3><button onclick="startSession()">بدء إرسال الكود</button><input id="code" inputmode="numeric" placeholder="كود Telegram" autocomplete="one-time-code"><button onclick="submitCode()">تحقق من الكود</button><input id="password" type="password" placeholder="كلمة مرور التحقق بخطوتين"><button onclick="submitPassword()">تحقق من كلمة المرور</button></div><div class="formbox"><h3>2. الترحيل والتشغيل</h3><p class="hint">بعد نجاح الجلسة اضغط ترحيل الجلسة، ثم شغّل البوت.</p><div class="actions"><button onclick="transfer()">ترحيل الجلسة</button><button class="danger" onclick="resetSession()">إلغاء الجلسة المحفوظة</button><button onclick="startBot()">تشغيل البوت</button></div><p id="result"></p></div></div></section>
 <section class="panel"><div class="jobtop"><h2>العمليات الحية</h2><button onclick="loadAll()">تحديث الآن</button></div><div id="jobs">جارٍ تحميل العمليات...</div></section>
 <section class="panel"><h2>السجل الحي لآخر عملية</h2><div id="liveLog" class="log">لا توجد أحداث بعد.</div></section>
 </main>
@@ -259,11 +276,11 @@ const statusName={ready:'جاهز للجلب',queued:'في الانتظار',pro
 function jobButtons(j){let a='';if(j.status==='ready')a+='<button onclick="fetchJob('+j.id+')">جلب إلى البوت</button>';if(['queued','processing','downloading','uploading','paused'].includes(j.status))a+='<button class="danger" onclick="cancelJob('+j.id+')">إلغاء</button>';if(['failed','cancelled'].includes(j.status))a+='<button onclick="retryJob('+j.id+')">إعادة المحاولة</button>';return a+'<button onclick="showLog('+j.id+')">عرض السجل</button>'}
 function renderJobs(data){const rows=Object.values(data.jobs||{}).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>{let p=Math.max(0,Math.min(100,Number(j.progress||0)));let total=Number(j.total||j.size||0);return '<article class="job"><div class="jobtop"><b>العملية #'+j.id+'</b><span class="phase">'+esc(statusName[j.status]||j.status)+'</span></div><div>'+esc(j.phase||'—')+'</div><div class="bar"><i style="width:'+p+'%"></i></div><div class="meta">'+p+'%'+(total?' • '+bytes(j.current||0)+' / '+bytes(total):'')+(j.speed?' • '+bytes(j.speed)+'/ث':'')+' • آخر تحديث: '+new Date((j.updated_at||0)*1000).toLocaleTimeString()+'</div>'+(j.error?'<div class="error">السبب: '+esc(j.error)+'</div><div class="hint">الحل: '+esc(j.error_solution||'إعادة المحاولة')+'</div>':'')+'<div class="jobactions">'+jobButtons(j)+'</div></article>'}).join(''):'<p class="hint">لا توجد عمليات.</p>';window.jobsCache=data.jobs||{}}
 function showLog(id){const j=window.jobsCache[id];if(!j)return;document.getElementById('liveLog').textContent=(j.events||[]).slice(-30).join('\n')||'لا توجد أحداث مسجلة.';window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
-async function post(url,body={}){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const x=await r.json();document.getElementById('result').textContent=x.error||x.message||'تم التنفيذ';await loadAll()}catch(e){document.getElementById('result').textContent='تعذر الاتصال بالخدمة'}}
-async function startSession(){await post('/api/session/start')};async function submitCode(){await post('/api/session/code',{value:document.getElementById('code').value})};async function submitPassword(){await post('/api/session/password',{value:document.getElementById('password').value})};async function transfer(){await post('/api/session/transfer')};async function startBot(){await post('/api/bot/start')};
+async function post(url,body={}){const result=document.getElementById('result');result.textContent='جارٍ تنفيذ الطلب...';try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let x={};try{x=await r.json()}catch(_){x={error:'استجابة غير صالحة من الخدمة'}}result.textContent=x.error||x.message||(r.ok?'تم التنفيذ':'فشل الطلب');await loadAll();return x}catch(e){result.textContent='تعذر الاتصال بالخدمة: '+(e.message||'خطأ غير معروف');return {ok:false,error:'تعذر الاتصال بالخدمة'}}}
+	async function startSession(){await post('/api/session/start')};async function submitCode(){await post('/api/session/code',{value:document.getElementById('code').value})};async function submitPassword(){await post('/api/session/password',{value:document.getElementById('password').value})};async function transfer(){await post('/api/session/transfer')};async function resetSession(){if(confirm('سيتم حذف الجلسة المحلية وTMD_SESSION_B64 من Render. هل تريد المتابعة؟'))await post('/api/session/reset')};async function startBot(){await post('/api/bot/start')};
 async function fetchJob(id){await post('/api/jobs/'+id+'/fetch')};async function cancelJob(id){await post('/api/jobs/'+id+'/cancel')};async function retryJob(id){await post('/api/jobs/'+id+'/retry')};
-async function loadAll(){const [s,j]=await Promise.all([fetch('/api/status'),fetch('/api/jobs')]);if(s.ok){const x=await s.json();const active=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('renderState').textContent=x.render.service==='running'?'يعمل':'متوقف';document.getElementById('renderMeta').textContent='منفذ '+x.render.port;document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('botMeta').textContent=x.bot.running?'PID '+x.bot.pid+' • '+x.bot.uptime_seconds+'ث':'شغّل البوت من الزر أدناه';document.getElementById('workerState').textContent=x.worker.state==='running'?'يعمل':'متوقف';document.getElementById('workerMeta').textContent=x.worker.description;document.getElementById('sessionState').textContent=x.session.state==='ready'?'جاهزة':x.session.state;document.getElementById('sessionMeta').textContent=x.session.source_configured?'مصدر الجلسة مضبوط':'مصدر الجلسة غير مضبوط';document.getElementById('storageState').textContent=x.render.storage_writable?'متاح':'مشكلة';document.getElementById('storageMeta').textContent=x.render.storage_writable?'حفظ الحالة يعمل':'تحقق من مساحة Render';document.getElementById('activeCount').textContent=active;document.getElementById('totalCount').textContent='إجمالي: '+x.queue.total}if(j.ok)renderJobs(await j.json());document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
-setInterval(loadAll,3000);loadAll();
+async function loadAll(){const s=await fetch('/api/status').catch(()=>null);if(!s){document.getElementById('lastUpdate').textContent='تعذر الاتصال بلوحة الحالة';document.getElementById('renderState').textContent='غير متصل';document.getElementById('renderMeta').textContent='تحقق من خدمة Render';return}let x=null;try{x=await s.json()}catch(_){x=null}if(!s.ok||!x||!x.ok){document.getElementById('lastUpdate').textContent='فشل تحميل حالة الخدمة';document.getElementById('renderState').textContent='خطأ';document.getElementById('renderMeta').textContent='HTTP '+s.status;return}const active=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('renderState').textContent=x.render.service==='running'?'يعمل':'متوقف';document.getElementById('renderMeta').textContent='منفذ '+x.render.port;document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('botMeta').textContent=x.bot.running?'PID '+x.bot.pid+' • '+x.bot.uptime_seconds+'ث':'شغّل البوت من الزر أدناه';document.getElementById('workerState').textContent=x.worker.state==='running'?'يعمل':'متوقف';document.getElementById('workerMeta').textContent=x.worker.description;const sessionNames={idle:'غير مهيأة',starting:'جارٍ بدء الجلسة',code:'بانتظار كود Telegram',password:'بانتظار كلمة مرور 2FA',ready:'جاهزة',error:'خطأ'};document.getElementById('sessionState').textContent=sessionNames[x.session.state]||x.session.state||'غير معروف';document.getElementById('sessionMeta').textContent=x.session.error|| (x.session.source_configured?'مصدر الجلسة مضبوط':'مصدر الجلسة غير مضبوط');document.getElementById('storageState').textContent=x.render.storage_writable?'متاح':'مشكلة';document.getElementById('storageMeta').textContent=x.render.storage_writable?'حفظ الحالة يعمل':'تحقق من مساحة Render';document.getElementById('activeCount').textContent=active;document.getElementById('totalCount').textContent='إجمالي: '+x.queue.total;const j=await fetch('/api/jobs').catch(()=>null);if(j&&j.ok){const jobs=await j.json().catch(()=>null);if(jobs)renderJobs(jobs)}document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
+	setInterval(loadAll,3000);loadAll();
 </script></body></html>"""
     response = make_response(html.replace("__PHONE__", phone))
     return response
@@ -363,26 +380,47 @@ def session_password():
     return jsonify({"ok": True, "message": "جارٍ التحقق بخطوتين"})
 
 
+def render_env_var_request(method: str, key: str, data: dict | None = None):
+    token = os.getenv("RENDER_API_KEY", "").strip()
+    service = os.getenv("RENDER_SERVICE_ID", "").strip()
+    if not token or not service:
+        raise RuntimeError("أضف RENDER_API_KEY وRENDER_SERVICE_ID في Render")
+    url = f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/{quote(key, safe='')}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    payload = None if data is None else json.dumps(data).encode()
+    request = Request(url, data=payload, headers=headers, method=method)
+    return urlopen(request, timeout=30)
+
+
 def transfer_session():
     if setup.snapshot()["state"] != "ready":
         raise RuntimeError("أكمل تسجيل الدخول أولًا ثم اضغط ترحيل الجلسة")
     setup.close()
     if not SESSION_FILE.exists() or SESSION_FILE.stat().st_size == 0:
         raise RuntimeError("لا يوجد ملف جلسة صالح؛ أكمل تسجيل الدخول أولًا")
-    token = os.getenv("RENDER_API_KEY", "").strip()
-    service = os.getenv("RENDER_SERVICE_ID", "").strip()
-    if not token or not service:
-        raise RuntimeError("أضف RENDER_API_KEY وRENDER_SERVICE_ID في Render")
     encoded = base64.b64encode(SESSION_FILE.read_bytes()).decode("ascii")
-    url = f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/TMD_SESSION_B64"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    req = Request(url, data=json.dumps({"value": encoded}).encode(), headers=headers, method="PUT")
     try:
-        with urlopen(req, timeout=30):
+        with render_env_var_request("PUT", "TMD_SESSION_B64", {"value": encoded}):
             pass
     except HTTPError as exc:
         raise RuntimeError(f"Render رفض حفظ الجلسة (HTTP {exc.code})") from exc
     return True
+
+
+def reset_session():
+    global _SESSION_REVOKED
+    bot = bot_process_snapshot()
+    if bot["running"]:
+        raise RuntimeError("أوقف البوت أولًا قبل إلغاء الجلسة المحفوظة")
+    try:
+        with render_env_var_request("DELETE", "TMD_SESSION_B64"):
+            pass
+    except HTTPError as exc:
+        if exc.code != 404:
+            raise RuntimeError(f"Render رفض حذف الجلسة (HTTP {exc.code})") from exc
+    setup.reset()
+    os.environ.pop("TMD_SESSION_B64", None)
+    _SESSION_REVOKED = True
 
 
 @app.post("/api/session/transfer")
@@ -396,6 +434,17 @@ def session_transfer():
         return json_error(str(exc))
 
 
+@app.post("/api/session/reset")
+def session_reset():
+    if not authorized():
+        return json_error("غير مصرح", 401)
+    try:
+        reset_session()
+        return jsonify({"ok": True, "message": "تم إلغاء الجلسة المحلية وحذف TMD_SESSION_B64 من Render."})
+    except (OSError, URLError, HTTPError, RuntimeError) as exc:
+        return json_error(str(exc))
+
+
 @app.post("/api/bot/start")
 def bot_start():
     global _bot_process, _bot_started_at
@@ -404,7 +453,7 @@ def bot_start():
     with _bot_lock:
         if _bot_process is not None and _bot_process.poll() is None:
             return jsonify({"ok": True, "message": "البوت يعمل حاليًا"})
-        has_session = bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING")) or bool(env_first("TMD_SESSION_B64")) or SESSION_FILE.exists()
+        has_session = (not _SESSION_REVOKED) and (bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING")) or bool(env_first("TMD_SESSION_B64")) or SESSION_FILE.exists())
         if not has_session:
             return json_error("أكمل تسجيل جلسة Telegram أو رحّلها أولًا")
         setup.close()

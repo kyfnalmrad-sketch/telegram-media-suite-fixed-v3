@@ -4,13 +4,14 @@ import logging
 
 from pyrogram import idle
 
-from . import rbot, ubot
+from . import require_clients
 from .modules.job_queue import queue
 from .modules.send_restricted import process_job
 
 
 async def main() -> None:
     logging.info("Starting bot and user session")
+    rbot, ubot = require_clients()
     await rbot.start()
     try:
         await ubot.start()
