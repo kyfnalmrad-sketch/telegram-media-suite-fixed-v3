@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+from contextlib import suppress
 
 try:
     asyncio.get_event_loop()
@@ -16,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from pyrogram import Client
-from pyrogram.errors import FloodWait, SessionPasswordNeeded, RPCError
+from pyrogram.errors import ChannelInvalid, FileReferenceExpired, FloodWait, PeerIdInvalid, SessionPasswordNeeded, RPCError
 
 TELEGRAM_HOSTS = {
     "t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog",
@@ -241,8 +242,18 @@ class TelegramSession:
         assert self.client is not None
         try:
             return await self.client.get_messages(chat_ref, message_id)
+        except (PeerIdInvalid, ChannelInvalid) as first_error:
+            try:
+                await self.client.get_chat(chat_ref)
+            except (PeerIdInvalid, ChannelInvalid):
+                async for dialog in self.client.get_dialogs(limit=100):
+                    if dialog.chat.id == chat_ref:
+                        break
+                else:
+                    raise first_error
+            return await self.client.get_messages(chat_ref, message_id)
         except Exception as first_error:
-            if type(first_error).__name__ not in {"PeerIdInvalid", "ChannelInvalid", "ChatIdInvalid"}:
+            if type(first_error).__name__ != "ChatIdInvalid":
                 raise
             try:
                 await self.client.get_chat(chat_ref)
@@ -305,6 +316,18 @@ class TelegramSession:
                 return await self.client.download_media(
                     message, file_name=str(file_path), progress=progress
                 )
+            except FileReferenceExpired:
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    pass
+                if attempt >= max_retries:
+                    raise
+                chat_id = getattr(getattr(message, "chat", None), "id", None)
+                if chat_id is None:
+                    raise
+                # إعادة جلب الرسالة تستبدل كائن الوسيط بمرجع ملف حديث.
+                message = await self._get_message_with_peer_refresh(chat_id, int(message.id))
             except FloodWait as exc:
                 try:
                     file_path.unlink()
@@ -380,6 +403,13 @@ class TelegramSession:
     async def _download_message_spaced(self, message: Any, target_root: str,
                                        progress: Callable[[int, int], None]) -> dict[str, Any]:
         async with self._download_slot():
+            chat_id = getattr(getattr(message, "chat", None), "id", None)
+            msg_id = getattr(message, "id", None)
+            if chat_id and msg_id and self.client:
+                with suppress(Exception):
+                    fresh = await self.client.get_messages(chat_id, msg_id)
+                    if fresh and not fresh.empty:
+                        message = fresh
             return await self._download_message(message, target_root, progress)
 
     def fetch_chat(self, chat_ref: str | int) -> Any:

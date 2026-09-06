@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
+from pyrogram.errors import ChannelInvalid, ChannelPrivate, PeerIdInvalid
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 from pyrogram.types import (
     InlineKeyboardButton,
@@ -30,6 +31,32 @@ from pyrogram.types import (
 
 from automation import DualAutomationProcessor
 from downloader import TelegramSession, extract_telegram_links, parse_chat_link, parse_message_link, safe_name
+
+
+async def ensure_peer_resolved(client: Any, chat_id: int):
+    """مزامنة المحادثات لجلب access_hash للـ Peer المطلوب."""
+    try:
+        return await client.get_chat(chat_id)
+    except (PeerIdInvalid, ChannelInvalid):
+        async for dialog in client.get_dialogs(limit=100):
+            if dialog.chat.id == chat_id:
+                return dialog.chat
+        raise
+
+
+async def fetch_message_safe(session: TelegramSession, parsed_ref: str | int, message_id: int):
+    """جلب الرسالة مع إعادة المحاولة بعد مزامنة ذاكرة الـ Peer."""
+    try:
+        return await asyncio.wrap_future(session.fetch_message(parsed_ref, message_id))
+    except (PeerIdInvalid, ChannelInvalid):
+        user_client = getattr(session, "user_client", None)
+        if user_client is not None:
+            await ensure_peer_resolved(user_client, int(parsed_ref))
+        else:
+            await asyncio.wrap_future(session.fetch_chat(parsed_ref))
+        return await asyncio.wrap_future(session.fetch_message(parsed_ref, message_id))
+    except Exception:
+        return None
 
 
 class TelegramBotService:
@@ -561,7 +588,7 @@ class TelegramBotService:
                     chat = SimpleNamespace(id=invite_link, title="قناة عبر رابط دعوة", username=None, type=SimpleNamespace(value="invite"))
                 elif is_message_link:
                     parsed_ref, message_id = parse_message_link(text)
-                    source_message = await asyncio.wrap_future(session.fetch_message(parsed_ref, message_id))
+                    source_message = await fetch_message_safe(session, parsed_ref, message_id)
                     chat = source_message.chat if source_message else None
                     chat_ref = getattr(chat, "id", None) or parsed_ref
                 else:
@@ -886,7 +913,7 @@ class TelegramBotService:
         for index, link in enumerate(links, 1):
             try:
                 chat_ref, message_id = parse_message_link(link)
-                item = await asyncio.wrap_future(session.fetch_message(chat_ref, message_id))
+                item = await fetch_message_safe(session, chat_ref, message_id)
                 if not item or item.empty:
                     raise ValueError("الرسالة غير موجودة")
                 chat = item.chat
@@ -938,7 +965,7 @@ class TelegramBotService:
             session = self.session_getter()
             if not session:
                 raise RuntimeError("جلسة الحساب غير متاحة")
-            item = await asyncio.wrap_future(session.fetch_message(chat_ref, message_id))
+            item = await fetch_message_safe(session, chat_ref, message_id)
             if not item or item.empty:
                 raise ValueError("الرسالة غير موجودة")
             chat = item.chat
@@ -1368,7 +1395,7 @@ class TelegramBotService:
             session = self.session_getter()
             if not session:
                 raise RuntimeError("جلسة الحساب غير متاحة")
-            item = await asyncio.wrap_future(session.fetch_message(chat_ref, message_id))
+            item = await fetch_message_safe(session, chat_ref, message_id)
             await self._send_downloaded(message, item, worker_id)
         except Exception as exc:
             self.log(f"فشل طلب البوت: {type(exc).__name__}")
