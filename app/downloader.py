@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from pyrogram import Client
-from pyrogram.errors import ChannelInvalid, ChatIdInvalid, FileReferenceExpired, FloodWait, PeerIdInvalid, SessionPasswordNeeded, RPCError
+from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, FileReferenceExpired, FloodWait, PeerIdInvalid, SessionPasswordNeeded, RPCError
 
 TELEGRAM_HOSTS = {
     "t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog",
@@ -738,6 +738,8 @@ async def fetch_and_download_media(
     # جلب الرسالة بمرجع حديث ومعالجة أخطاء Telegram برسالة واضحة.
     try:
         message = await user_client.get_messages(chat_ref, message_id)
+    except (PeerIdInvalid, ChannelInvalid, ChannelPrivate, ChatIdInvalid):
+        raise
     except Exception as exc:
         raise ValueError(f"تعذر جلب الرسالة من القناة: {str(exc)}") from exc
 

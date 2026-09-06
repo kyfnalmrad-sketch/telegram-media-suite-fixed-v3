@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
-from pyrogram.errors import ChannelInvalid, ChannelPrivate, PeerIdInvalid
+from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, PeerIdInvalid
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 from pyrogram.types import (
     InlineKeyboardButton,
@@ -604,6 +604,34 @@ class TelegramBotService:
                 await self._send_info_many(message, links)
             else:
                 await self._ask_download_consent(message, "links", links)
+            return
+        if mode == "private_join_link":
+            invite_link = text.strip()
+            if invite_link in {"عودة", "الغاء", "إلغاء", "/cancel"}:
+                self.user_flows.pop(user_id, None)
+                await message.reply_text("تم إلغاء محاولة الانضمام.", reply_markup=self._reply_keyboard())
+                return
+            if not re.search(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)", invite_link, re.IGNORECASE):
+                await message.reply_text(
+                    "أرسل رابط دعوة Telegram صحيحًا مثل https://t.me/+AbCdEf، أو اضغط «عودة»."
+                )
+                return
+            original_link = flow.get("link")
+            self.user_flows.pop(user_id, None)
+            try:
+                session = self.session_getter()
+                if not session:
+                    raise RuntimeError("جلسة الحساب غير متاحة")
+                await asyncio.wrap_future(session.join_chat(invite_link))
+                await message.reply_text("تمت إضافة الحساب الشخصي إلى القناة. سأعيد محاولة تنزيل الملف الآن.")
+                if not original_link:
+                    raise ValueError("انتهت بيانات رابط التنزيل، أرسل الرابط من جديد.")
+                await self._execute_approved_download(message, original_link)
+            except Exception as exc:
+                await message.reply_text(
+                    self._error_report(exc, "الانضمام إلى القناة الخاصة"),
+                    reply_markup=self._reply_keyboard(),
+                )
             return
         if mode == "channel_link":
             links = self._extract_links(text)
@@ -1470,6 +1498,25 @@ class TelegramBotService:
                 file_path=file_path,
             )
         except Exception as exc:
+            needs_private_join = isinstance(exc, (PeerIdInvalid, ChannelPrivate, ChannelInvalid, ChatIdInvalid))
+            needs_private_join = needs_private_join or (
+                isinstance(exc, ValueError)
+                and any(marker in str(exc) for marker in ("ليس عضواً", "مرجع القناة", "القناة غير متاحة"))
+            )
+            if needs_private_join:
+                self.user_flows[message.from_user.id] = {
+                    "mode": "private_join_link",
+                    "link": link,
+                    "created_at": time.time(),
+                }
+                await message.reply_text(
+                    "لم يتمكن الحساب الشخصي من الوصول إلى هذه القناة الخاصة.\n"
+                    "أرسل رابط دعوة القناة لأحاول إدخال الحساب ثم إعادة التنزيل، أو اضغط «عودة».",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [[KeyboardButton("عودة")]], resize_keyboard=True, one_time_keyboard=False
+                    ),
+                )
+                return False
             self.log(f"فشل طلب البوت: {type(exc).__name__}")
             await message.reply_text(
                 f"❌ تعذر اكتمال التنزيل: {str(exc)}",
