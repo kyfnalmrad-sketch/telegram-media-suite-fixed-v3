@@ -161,6 +161,14 @@ def json_error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
 
 
+def read_jobs() -> dict:
+    path = DATA_DIR / "jobs.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {"version": 1, "next_id": 1, "jobs": {}}
+
+
 def dashboard_login():
     return dashboard()
 
@@ -186,6 +194,7 @@ def dashboard():
         <p>إذا ظهرت حالة <b>code</b> أدخل الكود الرقمي الذي أرسله Telegram. إذا ظهرت حالة <b>password</b> أدخل كلمة مرور التحقق بخطوتين، وليس الكود الرقمي.</p>
         <button onclick='transfer()'>ترحيل الجلسة إلى Render</button>
         <button onclick='startBot()'>تشغيل البوت</button>
+        <h3>العمليات</h3><div id='jobs'>جارٍ التحميل...</div>
         <p id='result'></p>
         <script>
         async function call(url, body={{}}){{let r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}});let x=await r.json();document.getElementById('result').textContent=x.error||x.message||JSON.stringify(x);refresh();}}
@@ -194,11 +203,19 @@ def dashboard():
         async function submitPassword(){{await call('/api/session/password',{{value:document.getElementById('password').value}})}}
         async function transfer(){{await call('/api/session/transfer',{{}})}}
         async function startBot(){{await call('/api/bot/start',{{}})}}
+        async function jobs(){{let r=await fetch('/api/jobs');if(!r.ok)return;let x=await r.json();let rows=Object.values(x.jobs).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>`<p><b>#${{j.id}}</b> — ${{j.phase||j.status}} — ${{j.progress||0}}%</p>`).join(''): 'لا توجد عمليات';}}
         async function refresh(){{let r=await fetch('/api/session/status');if(!r.ok)return;let x=await r.json();document.getElementById('state').textContent=x.state;document.getElementById('codeBox').hidden=x.state!=='code';document.getElementById('passwordBox').hidden=x.state!=='password';if(x.error)document.getElementById('result').textContent=x.error;}}
-        setInterval(refresh,3000); refresh();
+        setInterval(refresh,3000); setInterval(jobs,3000); refresh(); jobs();
         </script>"""
     )
     return response
+
+
+@app.get("/api/jobs")
+def jobs_status():
+    if not authorized():
+        return json_error("غير مصرح", 401)
+    return jsonify(read_jobs())
 
 
 @app.get("/api/session/status")
