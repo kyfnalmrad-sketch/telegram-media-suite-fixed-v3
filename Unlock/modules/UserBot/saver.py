@@ -51,6 +51,22 @@ async def _get_message_with_refresh(chat_id: int | str, msg_id: int) -> Message:
         raise
 
 
+async def inspect_media(chat_id: int | str, msg_id: int) -> dict[str, Any] | None:
+    """Read media metadata only; do not download the file."""
+    msg = await _get_message_with_refresh(chat_id, int(msg_id))
+    if not msg or msg.empty:
+        return None
+    file_type, size = media_info(msg)
+    if not file_type:
+        return None
+    return {
+        "message": msg,
+        "type": file_type,
+        "size": size,
+        "caption": (msg.caption or msg.text or "").strip() or None,
+    }
+
+
 async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None) -> dict[str, Any] | None:
     try:
         msg = await _get_message_with_refresh(chat_id, int(msg_id))
