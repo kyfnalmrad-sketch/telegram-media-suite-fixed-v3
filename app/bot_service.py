@@ -1377,9 +1377,6 @@ class TelegramBotService:
         return True
 
     async def _send_downloaded(self, message: Any, item: Any, worker_id: int = 1) -> None:
-        if not item or item.empty or not item.media:
-            await message.reply_text("الرسالة لا تحتوي على ملف وسائط.", reply_markup=self._reply_keyboard())
-            return
         session = self.session_getter()
         if not session:
             raise RuntimeError("جلسة الحساب غير جاهزة")

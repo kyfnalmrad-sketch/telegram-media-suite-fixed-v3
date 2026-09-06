@@ -253,10 +253,10 @@ class TelegramSession:
 
     async def _download_message(self, message: Any, target_root: str,
                                 progress: Callable[[int, int], None]) -> dict[str, Any]:
-        if not message or message.empty or not message.media:
-            raise ValueError("الرسالة لا تحتوي على وسائط قابلة للتنزيل")
-        channel = safe_name(message.chat.title if message.chat else "telegram_channel")
-        month = message.date.strftime("%Y_%m") if message.date else "unknown_date"
+        chat = getattr(message, "chat", None)
+        channel = safe_name(getattr(chat, "title", None) or "telegram_channel")
+        message_date = getattr(message, "date", None)
+        month = message_date.strftime("%Y_%m") if message_date else "unknown_date"
         folder = Path(target_root).expanduser() / channel / month
         folder.mkdir(parents=True, exist_ok=True)
         context_label = await self._nearby_label(message)
