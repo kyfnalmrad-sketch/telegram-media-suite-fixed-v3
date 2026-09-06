@@ -57,7 +57,7 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
         if processing_msg:
             await processing_msg.edit_text("الرابط لا يحتوي على فيديو أو ملف وسائط قابل للتنزيل.")
         return None
-    if bytes_to_mb(size) > MAX_ALLOWED_DOWNLOAD_SIZE:
+    if MAX_ALLOWED_DOWNLOAD_SIZE is not None and bytes_to_mb(size) > MAX_ALLOWED_DOWNLOAD_SIZE:
         if processing_msg:
             await processing_msg.edit_text(f"حجم الملف أكبر من الحد المسموح ({MAX_ALLOWED_DOWNLOAD_SIZE:g} MB).")
         return None

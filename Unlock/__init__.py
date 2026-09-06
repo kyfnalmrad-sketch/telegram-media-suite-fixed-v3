@@ -60,6 +60,7 @@ if SESSION_STRING:
 else:
     ubot = Client("UserBot", api_id=API_ID, api_hash=API_HASH, plugins={"root": "Unlock.modules.UserBot"}, workdir=str(SESSION_DIR))
 
-MAX_ALLOWED_DOWNLOAD_SIZE = float(os.getenv("ALLOWED_DOWNLOAD_SIZE", "50"))
+_size_limit = os.getenv("ALLOWED_DOWNLOAD_SIZE", "").strip()
+MAX_ALLOWED_DOWNLOAD_SIZE = float(_size_limit) if _size_limit else None
 DEVELOPER = os.getenv("DEVELOPER", "")
 REPO_LINK = os.getenv("REPO_LINK", "")
