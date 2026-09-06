@@ -70,6 +70,8 @@ else:
     ubot = Client("UserBot", api_id=API_ID, api_hash=API_HASH, plugins={"root": "Unlock.modules.UserBot"}, workdir=str(SESSION_DIR))
 
 _size_limit = os.getenv("ALLOWED_DOWNLOAD_SIZE", "").strip()
-MAX_ALLOWED_DOWNLOAD_SIZE = float(_size_limit) if _size_limit else None
+# The empty/default configuration accepts media up to 5 GiB; deployments can
+# set a lower value in megabytes when their Render disk is smaller.
+MAX_ALLOWED_DOWNLOAD_SIZE = float(_size_limit) if _size_limit else 5120.0
 DEVELOPER = os.getenv("DEVELOPER", "")
 REPO_LINK = os.getenv("REPO_LINK", "")

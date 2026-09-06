@@ -180,34 +180,37 @@ def health():
 
 @app.get("/")
 def dashboard():
-    state = setup.snapshot()
-    response = make_response(
-        f"""<!doctype html><meta charset='utf-8'><title>إعداد جلسة Telegram</title>
-        <style>body{{font-family:Arial;max-width:760px;margin:40px auto;line-height:1.8;direction:rtl}}input,button{{padding:10px;margin:4px}}button{{cursor:pointer}}#result{{font-weight:bold}}</style>
-        <h2>إعداد جلسة Telegram</h2>
-        <p>الحالة: <b id='state'>{state['state']}</b></p>
-        <p>رقم الهاتف من Render: <span id='phone'>{env_first('TELEGRAM_PHONE_NUMBER', 'PHONE') or 'غير مضبوط'}</span></p>
-        <p>التسلسل: <b>بدء جلسة ← الكود ← كلمة مرور التحقق (إن وجدت) ← ترحيل الجلسة ← تشغيل البوت</b></p>
-        <button onclick='start()'>بدء جلسة</button><br>
-        <div id='codeBox' hidden><input id='code' inputmode='numeric' autocomplete='one-time-code' placeholder='كود Telegram الرقمي' style='width:330px'><button onclick='submitCode()'>تحقق من الكود</button></div>
-        <div id='passwordBox' hidden><input id='password' type='password' autocomplete='current-password' placeholder='كلمة مرور التحقق بخطوتين' style='width:330px'><button onclick='submitPassword()'>تحقق من كلمة المرور</button></div>
-        <p>إذا ظهرت حالة <b>code</b> أدخل الكود الرقمي الذي أرسله Telegram. إذا ظهرت حالة <b>password</b> أدخل كلمة مرور التحقق بخطوتين، وليس الكود الرقمي.</p>
-        <button onclick='transfer()'>ترحيل الجلسة إلى Render</button>
-        <button onclick='startBot()'>تشغيل البوت</button>
-        <h3>العمليات</h3><div id='jobs'>جارٍ التحميل...</div>
-        <p id='result'></p>
-        <script>
-        async function call(url, body={{}}){{let r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}});let x=await r.json();document.getElementById('result').textContent=x.error||x.message||JSON.stringify(x);refresh();}}
-        async function start(){{await call('/api/session/start',{{}})}}
-        async function submitCode(){{await call('/api/session/code',{{value:document.getElementById('code').value}})}}
-        async function submitPassword(){{await call('/api/session/password',{{value:document.getElementById('password').value}})}}
-        async function transfer(){{await call('/api/session/transfer',{{}})}}
-        async function startBot(){{await call('/api/bot/start',{{}})}}
-        async function jobs(){{let r=await fetch('/api/jobs');if(!r.ok)return;let x=await r.json();let rows=Object.values(x.jobs).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>`<p><b>#${{j.id}}</b> — ${{j.phase||j.status}} — ${{j.progress||0}}% ${{j.error?'<br>السبب: '+j.error+'<br>الحل: '+(j.error_solution||'إعادة المحاولة'):''}}</p>`).join(''): 'لا توجد عمليات';}}
-        async function refresh(){{let r=await fetch('/api/session/status');if(!r.ok)return;let x=await r.json();document.getElementById('state').textContent=x.state;document.getElementById('codeBox').hidden=x.state!=='code';document.getElementById('passwordBox').hidden=x.state!=='password';if(x.error)document.getElementById('result').textContent=x.error;}}
-        setInterval(refresh,3000); setInterval(jobs,3000); refresh(); jobs();
-        </script>"""
-    )
+    phone = env_first("TELEGRAM_PHONE_NUMBER", "PHONE") or "غير مضبوط"
+    html = """<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram Media Suite</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--panel:#121d31;--panel2:#18263d;--line:#2b3c59;--text:#e8eef8;--muted:#9fb0c8;--blue:#55a8ff;--green:#36d399;--red:#ff6b7a;--amber:#ffc857}
+*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#09111f,#111d31 55%,#0b1425);color:var(--text);font-family:Tahoma,Arial,sans-serif;line-height:1.6}.wrap{max-width:1180px;margin:0 auto;padding:28px 18px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.brand h1{margin:0;font-size:28px}.brand p{margin:4px 0 0;color:var(--muted)}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--amber);margin-left:7px}.dot.ok{background:var(--green)}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.card,.panel{background:rgba(18,29,49,.92);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 28px #0003}.card{padding:16px}.card .label{color:var(--muted);font-size:13px}.card .value{font-size:23px;font-weight:700;margin-top:4px}.panel{padding:18px;margin-bottom:18px}.panel h2{font-size:18px;margin:0 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.actions button,button{border:1px solid #3a5a80;background:#1d3858;color:var(--text);border-radius:9px;padding:10px 14px;cursor:pointer}.actions button:hover,button:hover{background:#28527d}.danger{border-color:#843d4a!important}.forms{display:grid;grid-template-columns:1fr 1fr;gap:16px}.formbox{background:var(--panel2);padding:14px;border-radius:12px}.formbox h3{margin:0 0 8px;font-size:15px}.formbox input{width:100%;padding:10px;background:#0b1526;color:var(--text);border:1px solid var(--line);border-radius:8px;margin:5px 0 8px}.hint,#result{color:var(--muted);font-size:13px}.job{border:1px solid var(--line);border-radius:12px;padding:14px;margin:10px 0;background:#0e192b}.jobtop{display:flex;justify-content:space-between;gap:12px}.phase{color:var(--blue);font-weight:700}.meta{color:var(--muted);font-size:13px}.bar{height:9px;background:#263650;border-radius:20px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:20px}.jobactions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.jobactions button{padding:6px 10px;font-size:12px}.log{font-family:ui-monospace,monospace;background:#091321;border-radius:9px;padding:10px;white-space:pre-wrap;color:#b9c9df;font-size:12px;max-height:180px;overflow:auto}.error{color:var(--red)}.success{color:var(--green)}@media(max-width:820px){.grid{grid-template-columns:repeat(2,1fr)}.forms{grid-template-columns:1fr}}@media(max-width:480px){.grid{grid-template-columns:1fr}.header{display:block}}
+</style></head>
+<body><main class="wrap">
+<header class="header"><div class="brand"><h1>Telegram Media Suite</h1><p><span id="botDot" class="dot"></span>لوحة العمليات والمراقبة الحية</p></div><div id="lastUpdate" class="hint">آخر تحديث: —</div></header>
+<section class="grid"><div class="card"><div class="label">حالة البوت</div><div id="botState" class="value">جارٍ التحقق</div></div><div class="card"><div class="label">جلسة Telegram</div><div id="sessionState" class="value">—</div></div><div class="card"><div class="label">الجارية الآن</div><div id="activeCount" class="value">0</div></div><div class="card"><div class="label">إجمالي العمليات</div><div id="totalCount" class="value">0</div></div></section>
+<section class="panel"><h2>إعداد الجلسة وتشغيل البوت</h2><p class="hint">رقم الهاتف المضبوط في Render: <b>__PHONE__</b></p><div class="forms"><div class="formbox"><h3>1. بدء جلسة Telegram</h3><button onclick="startSession()">بدء إرسال الكود</button><input id="code" inputmode="numeric" placeholder="كود Telegram" autocomplete="one-time-code"><button onclick="submitCode()">تحقق من الكود</button><input id="password" type="password" placeholder="كلمة مرور التحقق بخطوتين"><button onclick="submitPassword()">تحقق من كلمة المرور</button></div><div class="formbox"><h3>2. الترحيل والتشغيل</h3><p class="hint">بعد نجاح الجلسة اضغط ترحيل الجلسة، ثم شغّل البوت.</p><div class="actions"><button onclick="transfer()">ترحيل الجلسة</button><button onclick="startBot()">تشغيل البوت</button></div><p id="result"></p></div></div></section>
+<section class="panel"><div class="jobtop"><h2>العمليات الحية</h2><button onclick="loadAll()">تحديث الآن</button></div><div id="jobs">جارٍ تحميل العمليات...</div></section>
+<section class="panel"><h2>السجل الحي لآخر عملية</h2><div id="liveLog" class="log">لا توجد أحداث بعد.</div></section>
+</main>
+<script>
+const esc=(v)=>String(v??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const bytes=(n)=>{n=Number(n||0);const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<4){n/=1024;i++}return (i?n.toFixed(1):Math.round(n))+' '+u[i]};
+const statusName={ready:'جاهز للجلب',queued:'في الانتظار',processing:'قيد المعالجة',downloading:'جاري الجلب',uploading:'جاري الإرسال',completed:'اكتمل',failed:'فشل',cancelled:'أُلغي'};
+function jobButtons(j){let a='';if(j.status==='ready')a+='<button onclick="fetchJob('+j.id+')">جلب إلى البوت</button>';if(['queued','processing','downloading','uploading','paused'].includes(j.status))a+='<button class="danger" onclick="cancelJob('+j.id+')">إلغاء</button>';if(['failed','cancelled'].includes(j.status))a+='<button onclick="retryJob('+j.id+')">إعادة المحاولة</button>';return a+'<button onclick="showLog('+j.id+')">عرض السجل</button>'}
+function renderJobs(data){const rows=Object.values(data.jobs||{}).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>{let p=Math.max(0,Math.min(100,Number(j.progress||0)));let total=Number(j.total||j.size||0);return '<article class="job"><div class="jobtop"><b>العملية #'+j.id+'</b><span class="phase">'+esc(statusName[j.status]||j.status)+'</span></div><div>'+esc(j.phase||'—')+'</div><div class="bar"><i style="width:'+p+'%"></i></div><div class="meta">'+p+'%'+(total?' • '+bytes(j.current||0)+' / '+bytes(total):'')+(j.speed?' • '+bytes(j.speed)+'/ث':'')+' • آخر تحديث: '+new Date((j.updated_at||0)*1000).toLocaleTimeString()+'</div>'+(j.error?'<div class="error">السبب: '+esc(j.error)+'</div><div class="hint">الحل: '+esc(j.error_solution||'إعادة المحاولة')+'</div>':'')+'<div class="jobactions">'+jobButtons(j)+'</div></article>'}).join(''):'<p class="hint">لا توجد عمليات.</p>';window.jobsCache=data.jobs||{}}
+function showLog(id){const j=window.jobsCache[id];if(!j)return;document.getElementById('liveLog').textContent=(j.events||[]).slice(-30).join('\n')||'لا توجد أحداث مسجلة.';window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
+async function post(url,body={}){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const x=await r.json();document.getElementById('result').textContent=x.error||x.message||'تم التنفيذ';await loadAll()}catch(e){document.getElementById('result').textContent='تعذر الاتصال بالخدمة'}}
+async function startSession(){await post('/api/session/start')};async function submitCode(){await post('/api/session/code',{value:document.getElementById('code').value})};async function submitPassword(){await post('/api/session/password',{value:document.getElementById('password').value})};async function transfer(){await post('/api/session/transfer')};async function startBot(){await post('/api/bot/start')};
+async function fetchJob(id){await post('/api/jobs/'+id+'/fetch')};async function cancelJob(id){await post('/api/jobs/'+id+'/cancel')};async function retryJob(id){await post('/api/jobs/'+id+'/retry')};
+async function loadAll(){const [s,j]=await Promise.all([fetch('/api/status'),fetch('/api/jobs')]);if(s.ok){const x=await s.json();document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('sessionState').textContent=x.session.state;document.getElementById('activeCount').textContent=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('totalCount').textContent=x.queue.total}if(j.ok)renderJobs(await j.json());document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
+setInterval(loadAll,3000);loadAll();
+</script></body></html>"""
+    response = make_response(html.replace("__PHONE__", phone))
     return response
 
 
@@ -216,6 +219,77 @@ def jobs_status():
     if not authorized():
         return json_error("غير مصرح", 401)
     return jsonify(read_jobs())
+
+
+def mutate_job(job_id: int, action: str) -> dict:
+    payload = read_jobs()
+    jobs = payload.setdefault("jobs", {})
+    job = jobs.get(str(job_id))
+    if not job:
+        raise RuntimeError("العملية غير موجودة")
+    current = job.get("status")
+    transitions = {
+        "fetch": ({"ready"}, "queued", "في قائمة الانتظار للجلب"),
+        "cancel": ({"ready", "queued", "processing", "downloading", "uploading", "paused"}, "cancelled", "تم الإلغاء من لوحة Render"),
+        "retry": ({"failed", "cancelled"}, "queued", "أعيد إلى قائمة الانتظار من لوحة Render"),
+    }
+    allowed, status, phase = transitions[action]
+    if current not in allowed:
+        raise RuntimeError(f"لا يمكن تنفيذ الإجراء على عملية حالتها {current}")
+    now = int(__import__("time").time())
+    job.update(status=status, phase=phase, updated_at=now, last_activity=now)
+    if action in {"fetch", "retry"}:
+        job.update(progress=0, current=0, total=0, speed=0, error="", error_message="", error_solution="")
+    job.setdefault("events", []).append(f"{now}: {phase}")
+    job["events"] = job["events"][-30:]
+    job["last_event"] = phase
+    path = DATA_DIR / "jobs.json"
+    temporary = path.with_suffix(".json.tmp")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temporary, path)
+    return job
+
+
+@app.post("/api/jobs/<int:job_id>/<action>")
+def job_action(job_id: int, action: str):
+    if not authorized():
+        return json_error("غير مصرح", 401)
+    if action not in {"fetch", "cancel", "retry"}:
+        return json_error("إجراء غير معروف", 404)
+    try:
+        return jsonify({"ok": True, "job": mutate_job(job_id, action)})
+    except RuntimeError as exc:
+        return json_error(str(exc))
+    except OSError as exc:
+        return json_error(f"تعذر حفظ العملية: {exc}", 500)
+
+
+@app.get("/api/status")
+def service_status():
+    if not authorized():
+        return json_error("غير مصرح", 401)
+    payload = read_jobs()
+    jobs = list(payload.get("jobs", {}).values())
+    counts = {}
+    for job in jobs:
+        status = job.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    process_running = _bot_process is not None and _bot_process.poll() is None
+    return jsonify({
+        "ok": True,
+        "bot": {
+            "running": process_running,
+            "pid": _bot_process.pid if process_running else None,
+            "exit_code": None if process_running or _bot_process is None else _bot_process.poll(),
+        },
+        "session": setup.snapshot(),
+        "queue": {
+            "total": len(jobs),
+            "counts": counts,
+            "latest": max(jobs, key=lambda job: job.get("updated_at", 0), default=None),
+        },
+    })
 
 
 @app.get("/api/session/status")
