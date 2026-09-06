@@ -223,13 +223,16 @@ class TelegramBotService:
         elif isinstance(exc, RuntimeError) and ("جلسة" in str(exc) or "سجّل" in str(exc)):
             cause = "جلسة الحساب الشخصي غير جاهزة أو انتهت صلاحيتها."
             fix = "افتح الواجهة المحلية، سجّل الدخول بالحساب الشخصي، ثم أعد تشغيل العملية."
-        elif name in {"UserNotParticipant", "ChannelPrivate", "ChatAdminRequired", "Forbidden", "PeerIdInvalid", "ChannelInvalid", "ChatIdInvalid"}:
-            cause = "تعذر الوصول إلى المصدر المطلوب بالحساب المستخدم."
-            fix = "تحقق من الحساب والرابط ثم أعد المحاولة."
+        elif name in {"PeerIdInvalid", "ChannelInvalid", "ChatIdInvalid"}:
+            cause = "جلسة Telegram لا تملك معلومات الوصول الحالية لهذه القناة (Peer/Access Hash)."
+            fix = "افتح القناة من تطبيق Telegram بالحساب الشخصي، ثم أعد إرسال رابط رسالة منها. ويمكنك أيضًا توجيه رسالة منها إلى Saved Messages لتحديث ذاكرة الجلسة."
+        elif name in {"UserNotParticipant", "ChannelPrivate", "ChatAdminRequired", "Forbidden"}:
+            cause = "الحساب الشخصي المستخدم للجلب ليس عضوًا في القناة أو لا يملك صلاحية الوصول."
+            fix = "انضم إلى القناة بالحساب الشخصي، وتأكد أن الرابط من قناة يستطيع هذا الحساب فتحها، ثم أعد المحاولة."
         elif name in {"UsernameInvalid", "UsernameNotOccupied"}:
             cause = "اسم القناة العامة غير موجود أو غير مكتوب بشكل صحيح."
             fix = "تحقق من اسم المستخدم بعد t.me، وأرسل الرابط الكامل دون مسافات."
-        elif name in {"MsgIdInvalid", "MessageIdInvalid", "MessageNotModified"}:
+        elif name in {"MsgIdInvalid", "MessageIdInvalid", "MessageNotModified", "MessageEmpty"}:
             cause = "رقم الرسالة غير صحيح أو لم تعد الرسالة متاحة."
             fix = "افتح الرسالة في Telegram وانسخ رابطها من جديد، وتأكد أنها لم تُحذف."
         elif name in {"FloodWait", "Flood"}:

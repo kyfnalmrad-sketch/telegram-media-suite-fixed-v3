@@ -196,9 +196,24 @@ class TelegramSession:
     async def _download(self, link: str, target_root: str, progress: Callable[[int, int], None]) -> dict[str, Any]:
         if self.state != "ready" or not self.client:
             raise RuntimeError("سجّل الدخول أولًا")
-        chat_ref, message_id = parse_message_link(link)
-        message = await self.client.get_messages(chat_ref, message_id)
+        chat_ref, message_id = parse_message_link((link or "").strip())
+        message = await self._get_message_with_peer_refresh(chat_ref, message_id)
         return await self._download_message(message, target_root, progress)
+
+    async def _get_message_with_peer_refresh(self, chat_ref: str | int, message_id: int) -> Any:
+        """Fetch a message and refresh Telegram's peer cache once when needed."""
+        assert self.client is not None
+        try:
+            return await self.client.get_messages(chat_ref, message_id)
+        except Exception as first_error:
+            if type(first_error).__name__ not in {"PeerIdInvalid", "ChannelInvalid", "ChatIdInvalid"}:
+                raise
+            try:
+                await self.client.get_chat(chat_ref)
+            except Exception:
+                # Keep the original error: it carries the most useful Telegram cause.
+                raise first_error
+            return await self.client.get_messages(chat_ref, message_id)
 
     async def _download_message(self, message: Any, target_root: str,
                                 progress: Callable[[int, int], None]) -> dict[str, Any]:
@@ -276,7 +291,7 @@ class TelegramSession:
         if not self.loop or not self.client:
             raise RuntimeError("جلسة Telegram غير جاهزة")
         future = asyncio.run_coroutine_threadsafe(
-            self.client.get_messages(chat_ref, message_id), self.loop
+            self._get_message_with_peer_refresh(chat_ref, message_id), self.loop
         )
         return future
 
