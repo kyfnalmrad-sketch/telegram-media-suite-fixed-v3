@@ -35,7 +35,7 @@ ENV_ALIASES = {
     "API_ID": "TELEGRAM_API_ID",
     "API_HASH": "TELEGRAM_API_HASH",
     "BOT_TOKEN": "TELEGRAM_BOT_TOKEN",
-    "PHONE": "TELEGRAM_PHONE",
+    "PHONE": "TELEGRAM_PHONE_NUMBER",
     "ALLOWED_USER_IDS": "TELEGRAM_ALLOWED_USER_IDS",
     "AUTO_START": "TELEGRAM_AUTO_START",
 }
@@ -67,6 +67,9 @@ def _apply_env(data: dict[str, Any], env: dict[str, str]) -> dict[str, Any]:
         value = os.environ.get(env_key, env.get(env_key, ""))
         if not value and alias:
             value = os.environ.get(alias, env.get(alias, ""))
+        if not value and setting_key == "phone":
+            # Keep compatibility with the older TELEGRAM_PHONE spelling.
+            value = os.environ.get("TELEGRAM_PHONE", env.get("TELEGRAM_PHONE", ""))
         if not value:
             continue
         data[setting_key] = _is_true(value) if setting_key == "auto_start" else value

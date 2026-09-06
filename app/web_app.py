@@ -24,7 +24,9 @@ IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID")
 HOST = os.environ.get("TMD_HOST", "0.0.0.0" if IS_RENDER else "127.0.0.1")
 PORT = int(os.environ.get("PORT", os.environ.get("TMD_PORT", "8765")))
 OPEN_BROWSER = os.environ.get("TMD_OPEN_BROWSER", "false" if IS_RENDER else "true").lower() in {"1", "true", "yes"}
-DASHBOARD_TOKEN = os.environ.get("TMD_DASHBOARD_TOKEN", "").strip()
+DASHBOARD_TOKEN = (os.environ.get("TMD_DASHBOARD_TOKEN", "") or
+                   os.environ.get("ADMIN_SECRET_KEY", "") or
+                   os.environ.get("SECRET_KEY", "")).strip()
 _owner_raw = os.environ.get("TMD_SESSION_SETUP_OWNER_ID", "").strip()
 try:
     SESSION_SETUP_OWNER_ID = int(_owner_raw) if _owner_raw else None
@@ -106,6 +108,7 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
     imported: dict[str, str] = {}
     allowed = {"API_ID", "API_HASH", "BOT_TOKEN", "PHONE", "ALLOWED_USER_IDS", "AUTO_START"}
     aliases = {f"TELEGRAM_{key}": key for key in allowed}
+    aliases.update({"TELEGRAM_PHONE_NUMBER": "PHONE"})
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
@@ -116,8 +119,17 @@ def import_render_environment(api_key: str = "", service_id: str = "") -> dict[s
             imported[key] = str(value)
     # Render may return names without secret values; the running service still
     # has the actual values in its own environment, so use them as a fallback.
+    runtime_aliases = {
+        "API_ID": "TELEGRAM_API_ID",
+        "API_HASH": "TELEGRAM_API_HASH",
+        "BOT_TOKEN": "TELEGRAM_BOT_TOKEN",
+        "PHONE": "TELEGRAM_PHONE_NUMBER",
+        "ALLOWED_USER_IDS": "TELEGRAM_ALLOWED_USER_IDS",
+        "AUTO_START": "TELEGRAM_AUTO_START",
+    }
     for key in allowed:
-        runtime_value = os.environ.get(key, os.environ.get(f"TELEGRAM_{key}", "")).strip()
+        alias = runtime_aliases.get(key, f"TELEGRAM_{key}")
+        runtime_value = os.environ.get(key, os.environ.get(alias, "")).strip()
         if key not in imported and runtime_value:
             imported[key] = runtime_value
     if not imported:
@@ -151,8 +163,17 @@ def sync_render_environment(values: dict[str, Any], api_key: str = "", service_i
         value = values.get(setting, "")
         if value is None or value == "":
             continue
-        if os.environ.get(f"TELEGRAM_{env_key}"):
-            env_key = f"TELEGRAM_{env_key}"
+        preferred_aliases = {
+            "API_ID": "TELEGRAM_API_ID",
+            "API_HASH": "TELEGRAM_API_HASH",
+            "BOT_TOKEN": "TELEGRAM_BOT_TOKEN",
+            "PHONE": "TELEGRAM_PHONE_NUMBER",
+            "ALLOWED_USER_IDS": "TELEGRAM_ALLOWED_USER_IDS",
+            "AUTO_START": "TELEGRAM_AUTO_START",
+        }
+        alias = preferred_aliases.get(env_key, f"TELEGRAM_{env_key}")
+        if os.environ.get(alias):
+            env_key = alias
         request = Request(
             f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/{quote(env_key, safe='')}",
             data=json.dumps({"value": str(value)}).encode("utf-8"),

@@ -24,6 +24,19 @@
 | `TMD_SUITE_DATA` | مسار البيانات المؤقتة | `/opt/render/project/src/.tmd-data` |
 | `TMD_HOST` و`TMD_OPEN_BROWSER` | إعداد الاستضافة | `0.0.0.0` و`false` |
 
+### الأسماء البديلة المقبولة
+
+إذا كانت متغيرات Render لديك تستخدم بادئة `TELEGRAM_`، فالتطبيق يقرأها مباشرة أيضًا:
+
+```text
+TELEGRAM_API_ID       -> API_ID
+TELEGRAM_API_HASH     -> API_HASH
+TELEGRAM_BOT_TOKEN    -> BOT_TOKEN
+TELEGRAM_PHONE_NUMBER -> PHONE
+```
+
+كما يقبل `ADMIN_SECRET_KEY` أو `SECRET_KEY` كبديل لـ `TMD_DASHBOARD_TOKEN` لحماية لوحة الإدارة. أما `RENDER_API_KEY` فهو مختلف عن مفتاح لوحة الإدارة؛ يجب أن يكون مفتاح Render API حقيقيًا إذا أردت ترحيل الجلسة تلقائيًا إلى Environment عبر API.
+
 ## الاختبارات المنفذة
 
 نجحت اختبارات الوظائف السابقة، واختبار استيراد Gunicorn، واختبار حماية مسارات Flask، واختبار منع التسجيل الذاتي، واختبار حساب نسبة التنزيل والسرعة والوقت المتبقي. أصبح callback التنزيل يحدّث حالة مشتركة فقط، بينما ينفذ بوت Telegram نبضًا غير متزامن كل ثانيتين على حلقة البوت؛ وهذا يمنع مشكلة اختلاف الحلقات ويعرض النسبة والسرعة ووقت الانتظار بصورة مستقرة.
