@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -30,6 +31,7 @@ SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_FILE = SESSION_DIR / "UserBot.session"
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
+_bot_started_at: float | None = None
 _bot_lock = threading.Lock()
 
 
@@ -173,9 +175,62 @@ def dashboard_login():
     return dashboard()
 
 
+def bot_process_snapshot() -> dict:
+    running = _bot_process is not None and _bot_process.poll() is None
+    return {
+        "running": running,
+        "pid": _bot_process.pid if running else None,
+        "exit_code": None if running or _bot_process is None else _bot_process.poll(),
+        "uptime_seconds": int(time.time() - _bot_started_at) if running and _bot_started_at else 0,
+    }
+
+
+def service_snapshot() -> dict:
+    payload = read_jobs()
+    jobs = list(payload.get("jobs", {}).values())
+    counts: dict[str, int] = {}
+    for job in jobs:
+        status = job.get("status", "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    bot = bot_process_snapshot()
+    session = setup.snapshot()
+    source_configured = bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING", "TMD_SESSION_B64") or SESSION_FILE.exists())
+    if session.get("state") == "idle" and source_configured:
+        session["state"] = "ready"
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        storage_writable = os.access(DATA_DIR, os.W_OK)
+    except OSError:
+        storage_writable = False
+    return {
+        "ok": True,
+        "render": {
+            "service": "running",
+            "port": int(os.getenv("PORT", "10000")),
+            "data_dir": str(DATA_DIR),
+            "storage_writable": storage_writable,
+            "checked_at": int(time.time()),
+        },
+        "bot": bot,
+        "worker": {
+            "state": "running" if bot["running"] else "stopped",
+            "description": "عامل العمليات يعمل داخل عملية البوت" if bot["running"] else "شغّل البوت لبدء عامل العمليات",
+        },
+        "session": {
+            **session,
+            "source_configured": source_configured,
+        },
+        "queue": {
+            "total": len(jobs),
+            "counts": counts,
+            "latest": max(jobs, key=lambda job: job.get("updated_at", 0), default=None),
+        },
+    }
+
+
 @app.get("/health")
 def health():
-    return jsonify({"ok": True, "service": "restricted-content-saver", "session": setup.snapshot()})
+    return jsonify(service_snapshot())
 
 
 @app.get("/")
@@ -192,7 +247,7 @@ def dashboard():
 </style></head>
 <body><main class="wrap">
 <header class="header"><div class="brand"><h1>Telegram Media Suite</h1><p><span id="botDot" class="dot"></span>لوحة العمليات والمراقبة الحية</p></div><div id="lastUpdate" class="hint">آخر تحديث: —</div></header>
-<section class="grid"><div class="card"><div class="label">حالة البوت</div><div id="botState" class="value">جارٍ التحقق</div></div><div class="card"><div class="label">جلسة Telegram</div><div id="sessionState" class="value">—</div></div><div class="card"><div class="label">الجارية الآن</div><div id="activeCount" class="value">0</div></div><div class="card"><div class="label">إجمالي العمليات</div><div id="totalCount" class="value">0</div></div></section>
+<section class="grid"><div class="card"><div class="label">خدمة Render</div><div id="renderState" class="value">جارٍ التحقق</div><div id="renderMeta" class="hint">—</div></div><div class="card"><div class="label">حالة البوت</div><div id="botState" class="value">جارٍ التحقق</div><div id="botMeta" class="hint">—</div></div><div class="card"><div class="label">عامل العمليات</div><div id="workerState" class="value">—</div><div id="workerMeta" class="hint">—</div></div><div class="card"><div class="label">جلسة Telegram</div><div id="sessionState" class="value">—</div><div id="sessionMeta" class="hint">—</div></div><div class="card"><div class="label">تخزين الحالة</div><div id="storageState" class="value">—</div><div id="storageMeta" class="hint">—</div></div><div class="card"><div class="label">العمليات الجارية</div><div id="activeCount" class="value">0</div><div id="totalCount" class="hint">إجمالي: 0</div></div></section>
 <section class="panel"><h2>إعداد الجلسة وتشغيل البوت</h2><p class="hint">رقم الهاتف المضبوط في Render: <b>__PHONE__</b></p><div class="forms"><div class="formbox"><h3>1. بدء جلسة Telegram</h3><button onclick="startSession()">بدء إرسال الكود</button><input id="code" inputmode="numeric" placeholder="كود Telegram" autocomplete="one-time-code"><button onclick="submitCode()">تحقق من الكود</button><input id="password" type="password" placeholder="كلمة مرور التحقق بخطوتين"><button onclick="submitPassword()">تحقق من كلمة المرور</button></div><div class="formbox"><h3>2. الترحيل والتشغيل</h3><p class="hint">بعد نجاح الجلسة اضغط ترحيل الجلسة، ثم شغّل البوت.</p><div class="actions"><button onclick="transfer()">ترحيل الجلسة</button><button onclick="startBot()">تشغيل البوت</button></div><p id="result"></p></div></div></section>
 <section class="panel"><div class="jobtop"><h2>العمليات الحية</h2><button onclick="loadAll()">تحديث الآن</button></div><div id="jobs">جارٍ تحميل العمليات...</div></section>
 <section class="panel"><h2>السجل الحي لآخر عملية</h2><div id="liveLog" class="log">لا توجد أحداث بعد.</div></section>
@@ -207,7 +262,7 @@ function showLog(id){const j=window.jobsCache[id];if(!j)return;document.getEleme
 async function post(url,body={}){try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const x=await r.json();document.getElementById('result').textContent=x.error||x.message||'تم التنفيذ';await loadAll()}catch(e){document.getElementById('result').textContent='تعذر الاتصال بالخدمة'}}
 async function startSession(){await post('/api/session/start')};async function submitCode(){await post('/api/session/code',{value:document.getElementById('code').value})};async function submitPassword(){await post('/api/session/password',{value:document.getElementById('password').value})};async function transfer(){await post('/api/session/transfer')};async function startBot(){await post('/api/bot/start')};
 async function fetchJob(id){await post('/api/jobs/'+id+'/fetch')};async function cancelJob(id){await post('/api/jobs/'+id+'/cancel')};async function retryJob(id){await post('/api/jobs/'+id+'/retry')};
-async function loadAll(){const [s,j]=await Promise.all([fetch('/api/status'),fetch('/api/jobs')]);if(s.ok){const x=await s.json();document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('sessionState').textContent=x.session.state;document.getElementById('activeCount').textContent=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('totalCount').textContent=x.queue.total}if(j.ok)renderJobs(await j.json());document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
+async function loadAll(){const [s,j]=await Promise.all([fetch('/api/status'),fetch('/api/jobs')]);if(s.ok){const x=await s.json();const active=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('renderState').textContent=x.render.service==='running'?'يعمل':'متوقف';document.getElementById('renderMeta').textContent='منفذ '+x.render.port;document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('botMeta').textContent=x.bot.running?'PID '+x.bot.pid+' • '+x.bot.uptime_seconds+'ث':'شغّل البوت من الزر أدناه';document.getElementById('workerState').textContent=x.worker.state==='running'?'يعمل':'متوقف';document.getElementById('workerMeta').textContent=x.worker.description;document.getElementById('sessionState').textContent=x.session.state==='ready'?'جاهزة':x.session.state;document.getElementById('sessionMeta').textContent=x.session.source_configured?'مصدر الجلسة مضبوط':'مصدر الجلسة غير مضبوط';document.getElementById('storageState').textContent=x.render.storage_writable?'متاح':'مشكلة';document.getElementById('storageMeta').textContent=x.render.storage_writable?'حفظ الحالة يعمل':'تحقق من مساحة Render';document.getElementById('activeCount').textContent=active;document.getElementById('totalCount').textContent='إجمالي: '+x.queue.total}if(j.ok)renderJobs(await j.json());document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
 setInterval(loadAll,3000);loadAll();
 </script></body></html>"""
     response = make_response(html.replace("__PHONE__", phone))
@@ -269,27 +324,7 @@ def job_action(job_id: int, action: str):
 def service_status():
     if not authorized():
         return json_error("غير مصرح", 401)
-    payload = read_jobs()
-    jobs = list(payload.get("jobs", {}).values())
-    counts = {}
-    for job in jobs:
-        status = job.get("status", "unknown")
-        counts[status] = counts.get(status, 0) + 1
-    process_running = _bot_process is not None and _bot_process.poll() is None
-    return jsonify({
-        "ok": True,
-        "bot": {
-            "running": process_running,
-            "pid": _bot_process.pid if process_running else None,
-            "exit_code": None if process_running or _bot_process is None else _bot_process.poll(),
-        },
-        "session": setup.snapshot(),
-        "queue": {
-            "total": len(jobs),
-            "counts": counts,
-            "latest": max(jobs, key=lambda job: job.get("updated_at", 0), default=None),
-        },
-    })
+    return jsonify(service_snapshot())
 
 
 @app.get("/api/session/status")
@@ -363,17 +398,18 @@ def session_transfer():
 
 @app.post("/api/bot/start")
 def bot_start():
-    global _bot_process
+    global _bot_process, _bot_started_at
     if not authorized():
         return json_error("غير مصرح", 401)
     with _bot_lock:
         if _bot_process is not None and _bot_process.poll() is None:
             return jsonify({"ok": True, "message": "البوت يعمل حاليًا"})
-        has_session = bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING")) or bool(env_first("TMD_SESSION_B64")) or SESSION_FILE.exists()
+        has_session = bool(env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_STRING")) or bool(env_first("TMD_SESSION_B64")) or SESSION_FILE.exists()
         if not has_session:
             return json_error("أكمل تسجيل جلسة Telegram أو رحّلها أولًا")
         setup.close()
         _bot_process = subprocess.Popen([sys.executable, "-m", "Unlock"], cwd=str(Path(__file__).parent))
+        _bot_started_at = time.time()
     return jsonify({"ok": True, "message": "تم تشغيل البوت"})
 
 
@@ -381,4 +417,5 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     if env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_B64") or SESSION_FILE.exists():
         _bot_process = subprocess.Popen([sys.executable, "-m", "Unlock"], cwd=str(Path(__file__).parent))
+        _bot_started_at = time.time()
     app.run(host="0.0.0.0", port=port, threaded=True)
