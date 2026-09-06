@@ -120,12 +120,13 @@ def dashboard():
     <p>رقم الهاتف من Render: <span id='phone'>{os.getenv('PHONE') or os.getenv('TELEGRAM_PHONE_NUMBER') or 'غير مضبوط'}</span></p>
     <button onclick='start()'>بدء جلسة</button><br>
     <input id='value' placeholder='الكود أو كلمة مرور التحقق' style='width:330px'><button onclick='submitValue()'>إرسال</button>
-    <button onclick='transfer()'>ترحيل الجلسة إلى Render</button><p id='result'></p>
+    <button onclick='transfer()'>ترحيل الجلسة إلى Render</button><button onclick='startBot()'>تشغيل البوت</button><p id='result'></p>
     <script>
     async function call(url, body={{}}){{let r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}});let x=await r.json();document.getElementById('result').textContent=x.error||x.message||JSON.stringify(x); refresh();}}
     async function start(){{await call('/api/session/start',{{}})}}
     async function submitValue(){{let v=document.getElementById('value').value;let s=document.getElementById('state').textContent;await call(s==='password'?'/api/session/password':'/api/session/code',{{value:v}})}}
     async function transfer(){{await call('/api/session/transfer',{{}})}}
+    async function startBot(){{await call('/api/bot/start',{{}})}}
     async function refresh(){{let x=await (await fetch('/api/session/status')).json();document.getElementById('state').textContent=x.state;}}
     setInterval(refresh,3000);
     </script>""")
@@ -194,6 +195,18 @@ def session_transfer():
         return jsonify({"ok": True, "message": "تم ترحيل الجلسة إلى Render؛ ستتم إعادة تشغيل الخدمة تلقائيًا"})
     except (OSError, URLError, HTTPError, RuntimeError) as exc:
         return json_error(str(exc))
+
+
+@app.post("/api/bot/start")
+def bot_start():
+    global _bot_process
+    if not authorized(): return json_error("غير مصرح", 401)
+    if _bot_process is not None and _bot_process.poll() is None:
+        return jsonify({"ok": True, "message": "البوت يعمل حاليًا"})
+    if not (os.getenv("SESSION_STRING") or os.getenv("TMD_SESSION_STRING") or os.getenv("TMD_SESSION_B64") or SESSION_FILE.exists()):
+        return json_error("أكمل تسجيل جلسة Telegram أو رحّلها أولًا")
+    _bot_process = subprocess.Popen([sys.executable, "-m", "Unlock"])
+    return jsonify({"ok": True, "message": "تم تشغيل البوت"})
 
 
 if __name__ == "__main__":

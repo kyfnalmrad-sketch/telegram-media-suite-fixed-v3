@@ -14,13 +14,23 @@ services:
         value: /opt/render/project/src/.tmd-data
       - key: API_ID
         sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
       - key: API_HASH
+        sync: false
+      - key: TELEGRAM_API_HASH
         sync: false
       - key: BOT_TOKEN
         sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
       - key: PHONE
         sync: false
+      - key: TELEGRAM_PHONE_NUMBER
+        sync: false
       - key: SESSION_STRING
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
         sync: false
       - key: TMD_SESSION_B64
         sync: false
