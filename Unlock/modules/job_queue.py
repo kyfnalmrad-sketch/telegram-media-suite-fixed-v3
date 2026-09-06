@@ -44,7 +44,7 @@ class JobQueue:
             os.replace(temporary, STATE_FILE)
 
     def add(self, chat_id: int, user_id: int, link: str, parsed: tuple[str | int, int]) -> dict:
-        active = [j for j in self.jobs.values() if j.get("status") in {"queued", "processing", "downloading", "uploading", "paused"}]
+        active = [j for j in self.jobs.values() if j.get("status") in {"ready", "queued", "processing", "downloading", "uploading", "paused"}]
         if len(active) >= MAX_JOBS:
             raise RuntimeError(f"قائمة الانتظار ممتلئة (الحد الأقصى {MAX_JOBS} عمليات)")
         chat_ref, message_id = parsed
@@ -58,8 +58,8 @@ class JobQueue:
             "link": link,
             "chat_ref": str(chat_ref),
             "message_id": message_id,
-            "status": "queued",
-            "phase": "في قائمة الانتظار",
+            "status": "ready",
+            "phase": "جاهز بعد التحليل — اختر الجلب إلى البوت",
             "progress": 0,
             "current": 0,
             "total": 0,

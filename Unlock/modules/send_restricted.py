@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 
-from .UserBot.saver import cleanup, saver
+from .UserBot.saver import cleanup, inspect_media, saver
 from .job_queue import queue
 
 LINK_RE = re.compile(r"https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>]+", re.I)
@@ -87,13 +87,45 @@ async def enqueue_link(bot: Client, message: Message, link: str) -> None:
         await message.reply_text("الرابط غير صحيح. أرسل رابط رسالة Telegram مثل:\nhttps://t.me/channel/123")
         return
     try:
+        info = await inspect_media(parsed[0], parsed[1])
+        if not info:
+            await message.reply_text("الرابط لا يحتوي على فيديو أو صوت أو صورة أو مستند قابل للإرسال.")
+            return
+    except Exception as exc:
+        await message.reply_text(f"تعذر تحليل الرابط: {type(exc).__name__}")
+        return
+    try:
         job = queue.add(message.chat.id, message.from_user.id if message.from_user else 0, link, parsed)
     except RuntimeError as exc:
         await message.reply_text(f"⚠️ {exc}")
         return
-    status = await message.reply_text(f"📥 أضيفت العملية #{job['id']} إلى قائمة الانتظار.\nالحالة: في الانتظار")
+    size_mb = info["size"] / 1048576 if info["size"] else 0
+    source = getattr(getattr(info["message"], "chat", None), "title", None) or getattr(getattr(info["message"], "chat", None), "username", None) or str(parsed[0])
+    caption = (info.get("caption") or "بدون وصف")[:500]
+    queue.update(job["id"], media_type=info["type"], size=info["size"], source=source, caption=caption)
+    status = await message.reply_text(
+        f"🔎 تم تحليل العملية #{job['id']}\n"
+        f"النوع: {info['type']}\nالحجم: {size_mb:.2f} MB\n"
+        f"المصدر: {source}\nرقم الرسالة: {parsed[1]}\n"
+        f"الوصف: {caption}",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬇️ جلب إلى البوت", callback_data=f"job:fetch:{job['id']}")],
+            [InlineKeyboardButton("🛑 إلغاء", callback_data=f"job:cancel:{job['id']}")],
+        ]),
+    )
     queue.update(job["id"], status_message_id=status.id)
-    await queue.start(lambda current: process_job(bot, current))
+
+
+@Client.on_callback_query(filters.regex(r"^job:fetch:(\d+)$"))
+async def fetch_job(_: Client, query: CallbackQuery):
+    job_id = int(query.data.split(":")[-1])
+    job = queue.get(job_id)
+    if not job or job.get("status") != "ready":
+        await query.answer("العملية ليست جاهزة للجلب")
+        return
+    queue.update(job_id, status="queued", phase="في قائمة الانتظار للجلب")
+    await query.answer("أضيفت إلى قائمة الجلب")
+    await query.message.edit_text(f"📥 العملية #{job_id} في قائمة الانتظار للجلب...")
 
 
 @Client.on_callback_query(filters.regex("^download_video$"))
