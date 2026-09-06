@@ -174,6 +174,86 @@ def sync_render_environment(values: dict[str, Any], api_key: str = "", service_i
             raise RuntimeError("تعذر الاتصال بـ Render أثناء المزامنة") from exc
     log(f"تمت مزامنة {len(updated)} إعدادات مع Render، وتعذر تحديث {len(skipped)}.")
     return {"updated": updated, "skipped": skipped}
+
+
+def _session_file() -> Path:
+    current = load_settings()
+    session_dir = Path(str(current.get("session_path", ""))).expanduser()
+    return session_dir / "tmd_user.session"
+
+
+def _session_b64() -> str:
+    path = _session_file()
+    if not path.is_file():
+        raise RuntimeError("لا يوجد ملف جلسة مكتمل. سجّل الدخول أولًا ثم أعد المحاولة")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError("تعذر قراءة ملف جلسة Telegram") from exc
+    if not raw:
+        raise RuntimeError("ملف جلسة Telegram فارغ أو غير مكتمل")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def sync_session_to_render(api_key: str = "", service_id: str = "") -> dict[str, Any]:
+    """Upload the current session as a Render secret without returning its value."""
+    token = (api_key or os.environ.get("RENDER_API_KEY", "")).strip()
+    service = (service_id or os.environ.get("RENDER_SERVICE_ID", "") or
+               load_settings().get("render_service_id", "")).strip()
+    if not token or not service:
+        raise RuntimeError("أدخل Render API Key وService ID لمزامنة الجلسة")
+    encoded = _session_b64()
+    if encoded == os.environ.get("TMD_SESSION_B64", "").strip():
+        return {"updated": False, "message": "الجلسة الموجودة في Render مطابقة للجلسة الحالية"}
+    url = f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars/TMD_SESSION_B64"
+    request = Request(
+        url,
+        data=json.dumps({"value": encoded}).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json",
+                 "Authorization": f"Bearer {token}"},
+        method="PUT",
+    )
+    try:
+        with urlopen(request, timeout=30):
+            pass
+    except HTTPError as exc:
+        if exc.code != 404:
+            if exc.code in {401, 403}:
+                raise RuntimeError("Render رفض مفتاح API أو لا يملك صلاحية تعديل الخدمة") from exc
+            raise RuntimeError(f"تعذر حفظ الجلسة في Render (HTTP {exc.code})") from exc
+        create_request = Request(
+            f"https://api.render.com/v1/services/{quote(service, safe='')}/env-vars",
+            data=json.dumps({"key": "TMD_SESSION_B64", "value": encoded}).encode("utf-8"),
+            headers={"Accept": "application/json", "Content-Type": "application/json",
+                     "Authorization": f"Bearer {token}"},
+            method="POST",
+        )
+        try:
+            with urlopen(create_request, timeout=30):
+                pass
+        except HTTPError as create_exc:
+            if create_exc.code in {401, 403}:
+                raise RuntimeError("Render رفض مفتاح API أو لا يملك صلاحية إنشاء متغير الجلسة") from create_exc
+            raise RuntimeError(f"تعذر إنشاء متغير الجلسة في Render (HTTP {create_exc.code})") from create_exc
+    except (URLError, TimeoutError) as exc:
+        raise RuntimeError("تعذر الاتصال بـ Render أثناء حفظ الجلسة") from exc
+    log("تم حفظ جلسة Telegram الحالية في Render دون تسجيل محتواها.")
+    return {"updated": True, "message": "تم ترحيل الجلسة إلى Render. قد تعيد Render تشغيل الخدمة تلقائيًا."}
+
+
+def _auto_sync_session() -> None:
+    """Persist a newly authenticated session when Render credentials are configured."""
+    if not os.environ.get("RENDER_API_KEY", "").strip():
+        return
+    for _ in range(180):
+        time.sleep(2)
+        if manager.session_snapshot().get("state") != "ready":
+            continue
+        try:
+            sync_session_to_render()
+        except RuntimeError as exc:
+            log(f"تعذر ترحيل الجلسة تلقائيًا: {exc}")
+        return
 def save_bot_allowlist(user_ids: set[int]) -> None:
     current = load_settings()
     current["allowed_user_ids"] = ",".join(str(user_id) for user_id in sorted(user_ids))
@@ -250,7 +330,8 @@ label{display:block;margin:18px 0 8px;color:#b9c9df;font-size:16px}input,button,
 <label>رقم الهاتف</label><input id="phone" placeholder="للحساب الشخصي">
 <label>معرّف الدردشة الافتراضي</label><input id="chat_id" placeholder="مثال: -1001234567890">
 <div class="row"><button onclick="saveSettings()">حفظ الإعدادات</button><button class="secondary" onclick="startSession()">بدء جلسة Telegram</button></div>
-<div id="sessionStatus" class="status">حالة الجلسة: ...</div></section>
+<div class="row"><button class="secondary" onclick="syncSession()">ترحيل الجلسة الحالية إلى Render</button></div>
+<div id="sessionStatus" class="status">حالة الجلسة: ...</div><p class="muted">إذا كان RENDER_API_KEY مضبوطًا في Render، فسيتم ترحيل الجلسة تلقائيًا بعد اكتمال تسجيل الدخول. قد تؤدي المزامنة إلى إعادة تشغيل الخدمة، وهذا متوقع.</p></section>
 
 <section id="auth" class="card panel"><h2>تسجيل الدخول</h2>
 <p class="muted">تظهر الخانة المطلوبة فقط عندما يطلبها Telegram.</p>
@@ -291,6 +372,7 @@ async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON
 async function sendStoredPhone(){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind:'phone',value:''})});refresh()}catch(e){alert(e.message)}}
 async function importRender(){try{const d=await api('/api/render/import',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value})});Object.entries(d.editable||{}).forEach(([key,value])=>{const map={api_id:'api_id',api_hash:'api_hash',bot_token:'bot_token',phone:'phone',allowed_user_ids:'allowed_user_ids',storage_path:'storage_path'};if(map[key])setValue(map[key],value)});render_api_key.value='';document.getElementById('renderImportStatus').textContent='تم استيراد '+d.count+' إعدادات وظهرت القيم في المدخلات.';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
 async function syncRender(){const values={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked,render_service_id:render_service_id.value};try{const d=await api('/api/render/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value,values})});const skipped=(d.skipped||[]).join(', ');document.getElementById('renderImportStatus').textContent='تمت مزامنة '+(d.updated||[]).length+' قيم'+(skipped?'، تعذر تحديث: '+skipped+' — أضفها كمتغير مباشر في Render.':'')+' .';refresh()}catch(e){document.getElementById('renderImportStatus').textContent=e.message}}
+async function syncSession(){try{const d=await api('/api/render/session/sync',{method:'POST',body:JSON.stringify({api_key:render_api_key.value,service_id:render_service_id.value})});document.getElementById('sessionStatus').textContent=d.message||'تم ترحيل الجلسة إلى Render.';render_api_key.value='';refresh()}catch(e){document.getElementById('sessionStatus').textContent=e.message}}
 async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء المهمة: '+d.job_id;refresh()}catch(e){alert(e.message)}}
 async function startBot(){try{await api('/api/bot/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function stopBot(){try{await api('/api/bot/stop',{method:'POST'});refresh()}catch(e){alert(e.message)}}
@@ -363,6 +445,19 @@ def api_render_sync():
     except (RuntimeError, TypeError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True, **updated, "state": public_state()})
+
+
+@app.post("/api/render/session/sync")
+def api_render_session_sync():
+    payload = request.get_json(silent=True) or {}
+    try:
+        result = sync_session_to_render(
+            str(payload.get("api_key", "")),
+            str(payload.get("service_id", "")),
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, **result, "state": public_state()})
 
 
 @app.post("/api/session/start")
@@ -447,6 +542,8 @@ def initialize_runtime() -> None:
         manager.configure_session(str(current["api_id"]), str(current["api_hash"]), str(current["session_path"]))
     if current.get("auto_start") and current.get("bot_token"):
         threading.Thread(target=_auto_start_bot, args=(current,), daemon=True, name="auto-start-bot").start()
+    if os.environ.get("RENDER_API_KEY", "").strip():
+        threading.Thread(target=_auto_sync_session, daemon=True, name="auto-sync-session").start()
     log(f"واجهة الويب تعمل على http://{HOST}:{PORT}")
 
 
