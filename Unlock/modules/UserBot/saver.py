@@ -69,7 +69,7 @@ async def inspect_media(chat_id: int | str, msg_id: int) -> dict[str, Any] | Non
     }
 
 
-async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None) -> dict[str, Any] | None:
+async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None, job_id: int | None = None) -> dict[str, Any] | None:
     try:
         msg = await _get_message_with_refresh(chat_id, int(msg_id))
     except ChannelPrivate:
@@ -104,6 +104,12 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
 
         def progress(current: int, total: int):
             nonlocal last_update
+            # The queue may cancel an active transfer between chunks.
+            from ..job_queue import queue
+            if job_id:
+                # The caller stores the operation id on the transient message when available.
+                if queue.get(job_id) and queue.get(job_id).get("status") == "cancelled":
+                    raise RuntimeError("تم إلغاء العملية")
             now = time.monotonic()
             if not processing_msg or (now - last_update < 2 and current < total):
                 return

@@ -44,8 +44,10 @@ async def process_job(bot: Client, job: dict) -> None:
         status = await bot.send_message(job["chat_id"], f"⏳ العملية #{job['id']} قيد البدء...")
         queue.update(job["id"], status_message_id=status.id)
     queue.update(job["id"], phase="جاري جلب الوسائط من Telegram", status="downloading")
-    result = await saver(status, job["chat_ref"], job["message_id"], status)
+    result = await saver(status, job["chat_ref"], job["message_id"], status, job_id=job["id"])
     if not result:
+        if job.get("status") == "cancelled":
+            return
         queue.update(job["id"], status="failed", phase="فشل جلب الوسائط")
         return
     try:
@@ -58,6 +60,8 @@ async def process_job(bot: Client, job: dict) -> None:
 
         def upload_progress(current: int, total: int):
             nonlocal last_update
+            if job.get("status") == "cancelled":
+                raise RuntimeError("تم إلغاء العملية")
             now = time.monotonic()
             if now - last_update < 2 and current < total:
                 return
@@ -146,8 +150,17 @@ async def queue_control(_: Client, query: CallbackQuery):
     else:
         jobs = queue.recent(10)
         text = "📋 العمليات:\n" + "\n".join(f"#{j['id']} — {j['phase']}" for j in jobs) if jobs else "لا توجد عمليات."
+        rows = []
+        for job in jobs[:6]:
+            buttons = []
+            if job.get("status") not in {"completed", "cancelled"}:
+                buttons.append(InlineKeyboardButton(f"🛑 إلغاء #{job['id']}", callback_data=f"job:cancel:{job['id']}"))
+            if job.get("status") in {"failed", "cancelled"}:
+                buttons.append(InlineKeyboardButton(f"🔁 إعادة #{job['id']}", callback_data=f"job:retry:{job['id']}"))
+            if buttons:
+                rows.append(buttons)
     await query.answer("تم")
-    await query.message.reply_text(text)
+    await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(rows) if action == "list" and rows else None)
 
 
 @Client.on_callback_query(filters.regex(r"^job:(cancel|retry):(\d+)$"))
