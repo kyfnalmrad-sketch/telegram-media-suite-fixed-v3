@@ -10,6 +10,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 
 from .UserBot.saver import cleanup, inspect_media, saver
 from .job_queue import queue
+from .errors import explain_error
 from .start import menu
 from .ui_state import CONTROL_MESSAGES
 
@@ -50,7 +51,10 @@ async def process_job(bot: Client, job: dict) -> None:
     if not result:
         if job.get("status") == "cancelled":
             return
-        queue.update(job["id"], status="failed", phase="فشل جلب الوسائط")
+        details = job.get("error") or "تعذر جلب الوسائط من Telegram."
+        solution = job.get("error_solution") or "اضغط إعادة المحاولة بعد التأكد من وصول الحساب إلى القناة."
+        queue.update(job["id"], status="failed", phase="فشل جلب الوسائط", event=f"السبب: {details}")
+        await status.edit_text(f"❌ فشلت العملية #{job['id']} أثناء الجلب\nالسبب: {details}\nالحل المقترح: {solution}")
         return
     try:
         caption = result.get("caption") or "بدون وصف"
@@ -83,6 +87,10 @@ async def process_job(bot: Client, job: dict) -> None:
             await bot.send_document(job["chat_id"], result["path"], caption=caption, progress=upload_progress)
         queue.update(job["id"], status="completed", phase="اكتمل — جاهز للمشاهدة والتنزيل", progress=100)
         await status.edit_text(f"✅ اكتملت العملية #{job['id']}\nالوسائط جاهزة للمشاهدة أو الحفظ من رسالة Telegram.")
+    except Exception as exc:
+        code, details, solution = explain_error(exc, "الإرسال")
+        queue.update(job["id"], status="failed", phase="فشل إرسال الوسائط", error_code=code, error=details, error_message=details, error_solution=solution, event=f"الإرسال: {details}")
+        await status.edit_text(f"❌ فشلت العملية #{job['id']} أثناء الإرسال\nالسبب: {details}\nالحل المقترح: {solution}")
     finally:
         await cleanup(result)
 
@@ -165,7 +173,10 @@ async def queue_control(_: Client, query: CallbackQuery):
         text = "▶️ تم استئناف قائمة الانتظار."
     else:
         jobs = queue.recent(10)
-        text = "📋 العمليات:\n" + "\n".join(f"#{j['id']} — {j['phase']}" for j in jobs) if jobs else "لا توجد عمليات."
+        text = "📋 العمليات:\n" + "\n".join(
+            f"#{j['id']} — {j['phase']}" + (f"\nالسبب: {j.get('error')}\nالحل: {j.get('error_solution')}" if j.get('error') else "")
+            for j in jobs
+        ) if jobs else "لا توجد عمليات."
         rows = []
         for job in jobs[:6]:
             buttons = []

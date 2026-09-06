@@ -203,7 +203,7 @@ def dashboard():
         async function submitPassword(){{await call('/api/session/password',{{value:document.getElementById('password').value}})}}
         async function transfer(){{await call('/api/session/transfer',{{}})}}
         async function startBot(){{await call('/api/bot/start',{{}})}}
-        async function jobs(){{let r=await fetch('/api/jobs');if(!r.ok)return;let x=await r.json();let rows=Object.values(x.jobs).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>`<p><b>#${{j.id}}</b> — ${{j.phase||j.status}} — ${{j.progress||0}}%</p>`).join(''): 'لا توجد عمليات';}}
+        async function jobs(){{let r=await fetch('/api/jobs');if(!r.ok)return;let x=await r.json();let rows=Object.values(x.jobs).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>`<p><b>#${{j.id}}</b> — ${{j.phase||j.status}} — ${{j.progress||0}}% ${{j.error?'<br>السبب: '+j.error+'<br>الحل: '+(j.error_solution||'إعادة المحاولة'):''}}</p>`).join(''): 'لا توجد عمليات';}}
         async function refresh(){{let r=await fetch('/api/session/status');if(!r.ok)return;let x=await r.json();document.getElementById('state').textContent=x.state;document.getElementById('codeBox').hidden=x.state!=='code';document.getElementById('passwordBox').hidden=x.state!=='password';if(x.error)document.getElementById('result').textContent=x.error;}}
         setInterval(refresh,3000); setInterval(jobs,3000); refresh(); jobs();
         </script>"""

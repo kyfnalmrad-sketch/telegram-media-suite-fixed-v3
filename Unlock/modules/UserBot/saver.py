@@ -12,6 +12,7 @@ from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, Flood
 from pyrogram.types import Message
 
 from ... import DOWNLOAD_DIR, MAX_ALLOWED_DOWNLOAD_SIZE, ubot
+from ..errors import explain_error
 
 
 def bytes_to_mb(value: int) -> float:
@@ -41,6 +42,13 @@ async def _get_message_with_refresh(chat_id: int | str, msg_id: int) -> Message:
     try:
         return await ubot.get_messages(chat_id, msg_id)
     except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid):
+        try:
+            await ubot.resolve_peer(chat_id)
+            refreshed = await ubot.get_messages(chat_id, msg_id)
+            if refreshed:
+                return refreshed
+        except Exception:
+            pass
         wanted_id = int(chat_id) if str(chat_id).lstrip("-").isdigit() else None
         wanted_username = str(chat_id).lstrip("@").casefold()
         async for dialog in ubot.get_dialogs():
@@ -70,28 +78,40 @@ async def inspect_media(chat_id: int | str, msg_id: int) -> dict[str, Any] | Non
 
 
 async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None, job_id: int | None = None) -> dict[str, Any] | None:
+    def record_error(exc: Exception, phase: str):
+        if not job_id:
+            return
+        from ..job_queue import queue
+        code, message, solution = explain_error(exc, phase)
+        queue.update(job_id, error=message, error_code=code, error_message=message, error_solution=solution, event=f"{phase}: {message}")
+
     try:
         msg = await _get_message_with_refresh(chat_id, int(msg_id))
-    except ChannelPrivate:
+    except ChannelPrivate as exc:
+        record_error(exc, "الجلب")
         if processing_msg:
             await processing_msg.edit_text("لا يستطيع حساب الجلسة الوصول إلى هذه القناة.")
         return None
     except Exception as exc:
+        record_error(exc, "الجلب")
         logging.exception("Failed to fetch Telegram message")
         if processing_msg:
             await processing_msg.edit_text(f"تعذر قراءة الرسالة: {type(exc).__name__}")
         return None
 
     if not msg or msg.empty:
+        record_error(RuntimeError("الرسالة غير موجودة أو محذوفة"), "الجلب")
         if processing_msg:
             await processing_msg.edit_text("الرسالة غير موجودة أو تم حذفها.")
         return None
     file_type, size = media_info(msg)
     if not file_type:
+        record_error(RuntimeError("لا توجد وسائط مدعومة في الرسالة"), "الجلب")
         if processing_msg:
             await processing_msg.edit_text("الرابط لا يحتوي على فيديو أو ملف وسائط قابل للتنزيل.")
         return None
     if MAX_ALLOWED_DOWNLOAD_SIZE is not None and bytes_to_mb(size) > MAX_ALLOWED_DOWNLOAD_SIZE:
+        record_error(RuntimeError("حجم الملف أكبر من الحد المسموح"), "الجلب")
         if processing_msg:
             await processing_msg.edit_text(f"حجم الملف أكبر من الحد المسموح ({MAX_ALLOWED_DOWNLOAD_SIZE:g} MB).")
         return None
@@ -137,10 +157,12 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
             "source": source,
         }
     except FloodWait as exc:
+        record_error(exc, "الجلب")
         if processing_msg:
             await processing_msg.edit_text(f"Telegram طلب الانتظار {exc.value} ثانية ثم أعد المحاولة.")
         return None
     except Exception as exc:
+        record_error(exc, "الجلب")
         logging.exception("Failed to download media")
         if processing_msg:
             await processing_msg.edit_text(f"تعذر تنزيل الوسيط: {type(exc).__name__}")

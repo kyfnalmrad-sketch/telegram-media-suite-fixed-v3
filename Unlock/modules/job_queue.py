@@ -64,6 +64,11 @@ class JobQueue:
             "current": 0,
             "total": 0,
             "error": "",
+            "error_code": "",
+            "error_solution": "",
+            "last_event": "تم استقبال الرابط",
+            "last_activity": int(time.time()),
+            "events": ["تم استقبال الرابط"],
             "created_at": int(time.time()),
             "updated_at": int(time.time()),
         }
@@ -77,6 +82,12 @@ class JobQueue:
         if not job:
             return
         job.update(values)
+        event = values.get("event") or values.get("phase")
+        if event:
+            job.setdefault("events", []).append(f"{int(time.time())}: {event}")
+            job["events"] = job["events"][-30:]
+            job["last_event"] = event
+        job["last_activity"] = int(time.time())
         job["updated_at"] = int(time.time())
         self.save()
 
@@ -106,7 +117,7 @@ class JobQueue:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.update(job["id"], status="failed", phase="فشل — يمكن إعادة المحاولة", error=type(exc).__name__)
+                self.update(job["id"], status="failed", phase="فشل — يمكن إعادة المحاولة", error=type(exc).__name__, error_message=str(exc), event=f"فشل غير معالج: {type(exc).__name__}")
 
     def pause(self):
         self.pause_event.clear()
