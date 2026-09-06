@@ -729,20 +729,27 @@ async def fetch_and_download_media(
     output_dir: str = "./downloads",
     progress_callback: Any = None,
 ) -> Optional[str]:
-    """تحليل الرابط، التأكد من الانضمام والكاش، ثم تنزيل الوسائط."""
+    """تحليل الرابط، إجراء فحص شامل للقناة، ثم سحب الوسائط."""
     from bot_service import ensure_peer_resolved, parse_message_link
 
     chat_ref, message_id = parse_message_link(link)
     if not chat_ref or not message_id:
-        raise ValueError("صيغة الرابط غير صحيحة")
+        raise ValueError("صيغة الرابط غير صحيحة، يرجى التأكد من نسخ الرابط بشكل كامل.")
 
-    # التحقق من الانضمام وتحديث الكاش تلقائيًا قبل جلب الرسالة.
+    # إجراء الفحص الشامل للقناة وتحديث مرجعها في الجلسة قبل طلب الرسالة.
     await ensure_peer_resolved(user_client, chat_ref)
 
-    # جلب الرسالة بمرجع حديث.
-    message = await user_client.get_messages(chat_ref, message_id)
-    if not message or getattr(message, "empty", True) or not message.media:
-        raise ValueError("الرسالة غير متاحة أو لا تحتوي على وسائط قابلة للتنزيل")
+    # جلب الرسالة بمرجع حديث ومعالجة أخطاء Telegram برسالة واضحة.
+    try:
+        message = await user_client.get_messages(chat_ref, message_id)
+    except Exception as exc:
+        raise ValueError(f"تعذر جلب الرسالة من القناة: {str(exc)}") from exc
+
+    if not message or getattr(message, "empty", True):
+        raise ValueError("الرسالة المطلوبة غير موجودة أو تم حذفها من القناة.")
+
+    if not message.media:
+        raise ValueError("الرسالة المحددة لا تحتوي على وسائط (فيديو/صوت/ملف) للتنزيل.")
 
     os.makedirs(output_dir, exist_ok=True)
     return await user_client.download_media(

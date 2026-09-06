@@ -65,22 +65,26 @@ def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[i
 
 
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
-    """تحديث كاش الجلسة وإجبار Telegram على التعرف على المعرف الرقمي."""
+    """فحص كامل ومباشر لمحادثات الحساب لتحديث كاش القنوات."""
     try:
+        # محاولة الوصول المباشر
         return await client.get_chat(chat_ref)
     except Exception:
+        # فحص شامل لكافة المحادثات والقنوات التي ينضم لها الحساب
         async for dialog in client.get_dialogs():
-            if dialog.chat.id == chat_ref or dialog.chat.username == chat_ref:
+            if dialog.chat.id == chat_ref or (
+                dialog.chat.username
+                and dialog.chat.username.lower() == str(chat_ref).lower()
+            ):
                 return dialog.chat
 
+        # محاولة أخيرة بعد تحديث بيانات الجلسة بالكامل
         try:
             return await client.get_chat(chat_ref)
-        except Exception as exc:
+        except Exception:
             raise ValueError(
-                f"تعذر الوصول للقناة ({chat_ref}). "
-                "تأكد من انضمام الحساب الشخصي المربوط بالجلسة للقناة، "
-                "أو قم بفتح القناة منه مرة واحدة لتحديث الصلاحيات."
-            ) from exc
+                "الحساب الشخصي ليس عضواً في هذه القناة، أو أن القناة غير متاحة حالياً."
+            )
 
 
 async def fetch_message_safe(session, parsed_ref: Union[int, str], message_id: int):
