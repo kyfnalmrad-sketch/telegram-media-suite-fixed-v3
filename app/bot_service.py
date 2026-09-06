@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import calendar
+import os
 import re
 import threading
 import time
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Tuple, Union
 from uuid import uuid4
 
 from pyrogram import Client, filters
@@ -30,33 +31,60 @@ from pyrogram.types import (
 )
 
 from automation import DualAutomationProcessor
-from downloader import TelegramSession, extract_telegram_links, parse_chat_link, parse_message_link, safe_name
+from downloader import (
+    TelegramSession,
+    extract_telegram_links,
+    fetch_and_download_media,
+    parse_chat_link,
+    safe_name,
+)
 
 
-async def ensure_peer_resolved(client: Any, chat_id: int):
-    """مزامنة المحادثات لجلب access_hash للـ Peer المطلوب."""
+def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[int]]:
+    """استخراج معرف المحادثة ورقم الرسالة من روابط Telegram العامة والخاصة."""
+    link = link.strip()
+
+    private_match = re.search(r"t\.me/c/(\d+)/(\d+)", link)
+    if private_match:
+        chat_id = int(f"-100{private_match.group(1)}")
+        message_id = int(private_match.group(2))
+        return chat_id, message_id
+
+    public_match = re.search(r"t\.me/([a-zA-Z0-9_]+)/(\d+)", link)
+    if public_match:
+        return public_match.group(1), int(public_match.group(2))
+
+    return None, None
+
+
+async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
+    """مزامنة المحادثات لجلب معلومات الوصول للمعرف المطلوب."""
     try:
-        return await client.get_chat(chat_id)
+        return await client.get_chat(chat_ref)
     except (PeerIdInvalid, ChannelInvalid):
-        async for dialog in client.get_dialogs(limit=100):
-            if dialog.chat.id == chat_id:
+        async for dialog in client.get_dialogs(limit=200):
+            if dialog.chat.id == chat_ref or dialog.chat.username == chat_ref:
                 return dialog.chat
         raise
 
 
-async def fetch_message_safe(session: TelegramSession, parsed_ref: str | int, message_id: int):
-    """جلب الرسالة مع إعادة المحاولة بعد مزامنة ذاكرة الـ Peer."""
-    try:
-        return await asyncio.wrap_future(session.fetch_message(parsed_ref, message_id))
-    except (PeerIdInvalid, ChannelInvalid):
-        user_client = getattr(session, "user_client", None)
-        if user_client is not None:
-            await ensure_peer_resolved(user_client, int(parsed_ref))
-        else:
-            await asyncio.wrap_future(session.fetch_chat(parsed_ref))
-        return await asyncio.wrap_future(session.fetch_message(parsed_ref, message_id))
-    except Exception:
+async def fetch_message_safe(session, parsed_ref: Union[int, str], message_id: int):
+    """جلب الرسالة مع معالجة المعرفات الرقمية القادمة من روابط t.me/c/"""
+    if not parsed_ref or not message_id:
         return None
+
+    try:
+        # محاولة جلب الرسالة مباشرة عبر user_client
+        return await session.user_client.get_messages(parsed_ref, message_id)
+    except (PeerIdInvalid, ChannelInvalid, KeyError):
+        # في حال عدم تعرّف الجلسة على المعرّف، يتم إنعاش القائمة ثم إعادة المحاولة
+        if isinstance(parsed_ref, int):
+            await ensure_peer_resolved(session.user_client, parsed_ref)
+            return await session.user_client.get_messages(parsed_ref, message_id)
+    except Exception:
+        pass
+
+    return None
 
 
 class TelegramBotService:
@@ -1390,18 +1418,55 @@ class TelegramBotService:
         )
 
     async def _download_one(self, message: Any, link: str, worker_id: int = 1) -> bool:
+        del worker_id
+        return await self._execute_approved_download(message, link)
+
+    async def _execute_approved_download(self, message: Any, link: str) -> bool:
         try:
-            chat_ref, message_id = parse_message_link(link)
             session = self.session_getter()
             if not session:
                 raise RuntimeError("جلسة الحساب غير متاحة")
-            item = await fetch_message_safe(session, chat_ref, message_id)
-            await self._send_downloaded(message, item, worker_id)
+
+            user_cli = getattr(self, "user_client", None) or getattr(session, "client", None)
+            if user_cli is None:
+                raise RuntimeError("عميل حساب المستخدم غير متاح")
+
+            file_path = await fetch_and_download_media(
+                user_client=user_cli,
+                link=link,
+                output_dir="./downloads",
+            )
+            await self.send_downloaded_file(
+                chat_id=message.chat.id,
+                file_path=file_path,
+            )
         except Exception as exc:
             self.log(f"فشل طلب البوت: {type(exc).__name__}")
-            await message.reply_text(self._error_report(exc, "تنفيذ رابط التنزيل"), reply_markup=self._reply_keyboard())
+            await message.reply_text(
+                f"❌ تعذر اكتمال التنزيل: {str(exc)}",
+                reply_markup=self._reply_keyboard(),
+            )
             return False
         return True
+
+    async def send_downloaded_file(self, chat_id: int, file_path: str, caption: str = "") -> None:
+        """رفع الملف للمستخدم باستخدام عميل البوت أو عميل المستخدم حسب الحجم."""
+        if not file_path or not os.path.exists(file_path):
+            raise FileNotFoundError("لم يتم العثور على الملف المُنزل في المسار المحدد")
+
+        file_size = os.path.getsize(file_path)
+        MAX_BOT_LIMIT = 50 * 1024 * 1024
+
+        try:
+            sender = self.client if file_size <= MAX_BOT_LIMIT else getattr(self, "user_client", self.client)
+            await sender.send_document(
+                chat_id=chat_id,
+                document=file_path,
+                caption=caption or "✅ تم سحب الملف بنجاح.",
+            )
+        finally:
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
     async def _send_downloaded(self, message: Any, item: Any, worker_id: int = 1) -> None:
         session = self.session_getter()

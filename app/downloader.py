@@ -12,7 +12,7 @@ try:
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Tuple, Union
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
@@ -542,40 +542,21 @@ def _message_path_parts(parts: list[str]) -> tuple[str | int, int] | None:
     return None
 
 
-def parse_message_link(link: str) -> tuple[str | int, int]:
-    value, parsed = _parsed_telegram_url(link)
-    if parsed.scheme.lower() == "tg":
-        query = parse_qs(parsed.query)
-        action = parsed.netloc.lower()
-        if action == "resolve":
-            chat = query.get("domain", [""])[0]
-            post = query.get("post", [""])[0]
-            if chat and post.isdigit():
-                return _channel_ref(chat), int(post)
-        elif action in {"privatepost", "msg_url"}:
-            chat = query.get("channel", query.get("chat_id", [""]))[0]
-            post = query.get("post", query.get("message_id", [""]))[0]
-            if chat and post.isdigit():
-                return _channel_ref(chat), int(post)
-        elif action == "openmessage":
-            chat = query.get("chat_id", query.get("user_id", [""]))[0]
-            post = query.get("message_id", [""])[0]
-            if chat and post.isdigit():
-                return _channel_ref(chat), int(post)
-        raise ValueError("رابط رسالة Telegram غير صالح")
+def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[int]]:
+    """استخراج معرف المحادثة ورقم الرسالة من روابط Telegram العامة والخاصة."""
+    link = link.strip()
 
-    host = parsed.netloc.lower().removesuffix(".")
-    if host not in TELEGRAM_HOSTS:
-        raise ValueError("رابط Telegram غير صالح")
-    parts = [part for part in parsed.path.split("/") if part]
-    if parts and parts[0].lower() == "s":
-        parts = parts[1:]
-    message_ref = _message_path_parts(parts)
-    if message_ref is not None:
-        # In /c/<channel>/<topic>/<message>, the topic is context only;
-        # Telegram fetches the actual post by the final message id.
-        return message_ref
-    raise ValueError("رابط رسالة Telegram غير صالح")
+    private_match = re.search(r"t\.me/c/(\d+)/(\d+)", link)
+    if private_match:
+        chat_id = int(f"-100{private_match.group(1)}")
+        message_id = int(private_match.group(2))
+        return chat_id, message_id
+
+    public_match = re.search(r"t\.me/([a-zA-Z0-9_]+)/(\d+)", link)
+    if public_match:
+        return public_match.group(1), int(public_match.group(2))
+
+    return None, None
 
 
 def parse_chat_link(link: str) -> str | int:
@@ -733,3 +714,31 @@ class DownloadManager:
         with self.lock:
             jobs = {key: dict(value) for key, value in self.jobs.items()}
         return {"session": self.session_snapshot(), "jobs": jobs}
+
+
+async def fetch_and_download_media(
+    user_client: Client,
+    link: str,
+    output_dir: str = "./downloads",
+    progress_callback: Any = None,
+) -> Optional[str]:
+    """جلب الرسالة وتنزيل الوسائط منها بأسلوب مباشر ومستقر."""
+    from bot_service import ensure_peer_resolved, parse_message_link
+
+    chat_ref, message_id = parse_message_link(link)
+    if not chat_ref or not message_id:
+        raise ValueError("صيغة الرابط غير صحيحة")
+
+    if isinstance(chat_ref, int):
+        await ensure_peer_resolved(user_client, chat_ref)
+
+    message = await user_client.get_messages(chat_ref, message_id)
+    if not message or getattr(message, "empty", True) or not message.media:
+        raise ValueError("الرسالة غير متاحة أو لا تحتوي على وسائط")
+
+    os.makedirs(output_dir, exist_ok=True)
+    return await user_client.download_media(
+        message=message,
+        file_name=os.path.join(output_dir, ""),
+        progress=progress_callback,
+    )
