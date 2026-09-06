@@ -28,8 +28,6 @@ DATA_DIR = Path(os.getenv("TMD_SUITE_DATA", "/opt/render/project/src/.tmd-data")
 SESSION_DIR = DATA_DIR / "sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_FILE = SESSION_DIR / "UserBot.session"
-DASHBOARD_TOKEN = (os.getenv("TMD_DASHBOARD_TOKEN") or os.getenv("ADMIN_SECRET_KEY") or "").strip()
-
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
 _bot_lock = threading.Lock()
@@ -153,14 +151,10 @@ setup = SessionSetup()
 
 
 def authorized() -> bool:
-    if not DASHBOARD_TOKEN:
-        return not os.getenv("RENDER")
-    supplied = (
-        request.headers.get("X-Dashboard-Token", "")
-        or request.cookies.get("dashboard_token", "")
-        or request.args.get("token", "")
-    )
-    return bool(supplied) and hmac.compare_digest(supplied, DASHBOARD_TOKEN)
+    # The dashboard is intentionally open so Render/browser never shows an
+    # HTTP Basic username/password prompt. Telegram verification is handled
+    # only by the explicit code and 2FA steps in the page.
+    return True
 
 
 def json_error(message: str, status: int = 400):
@@ -168,15 +162,7 @@ def json_error(message: str, status: int = 400):
 
 
 def dashboard_login():
-    return make_response(
-        """<!doctype html><meta charset='utf-8'><title>دخول لوحة الجلسة</title>
-        <style>body{font-family:Arial;max-width:520px;margin:70px auto;line-height:1.8;direction:rtl}input,button{padding:11px;margin:4px;width:100%;box-sizing:border-box}button{cursor:pointer}</style>
-        <h2>دخول لوحة إعداد جلسة Telegram</h2>
-        <p>أدخل قيمة <b>TMD_DASHBOARD_TOKEN</b> الموجودة في إعدادات Render. هذه ليست اسم مستخدم أو كلمة مرور Telegram.</p>
-        <form method='get' action='/'><input name='token' type='password' autocomplete='off' placeholder='مفتاح لوحة الإدارة' required><button type='submit'>دخول</button></form>
-        """,
-        401,
-    )
+    return dashboard()
 
 
 @app.get("/health")
@@ -186,8 +172,6 @@ def health():
 
 @app.get("/")
 def dashboard():
-    if not authorized():
-        return dashboard_login()
     state = setup.snapshot()
     response = make_response(
         f"""<!doctype html><meta charset='utf-8'><title>إعداد جلسة Telegram</title>
@@ -214,9 +198,6 @@ def dashboard():
         setInterval(refresh,3000); refresh();
         </script>"""
     )
-    token = request.args.get("token", "").strip()
-    if token and DASHBOARD_TOKEN and hmac.compare_digest(token, DASHBOARD_TOKEN):
-        response.set_cookie("dashboard_token", token, secure=True, httponly=True, samesite="Lax")
     return response
 
 
