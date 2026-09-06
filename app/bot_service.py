@@ -41,31 +41,46 @@ from downloader import (
 
 
 def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[int]]:
-    """استخراج معرف المحادثة ورقم الرسالة من روابط Telegram العامة والخاصة."""
+    """تحليل روابط تليجرام بدعم النطاقات المتعددة والمعلمات الخاصة."""
+    if not link:
+        return None, None
+
     link = link.strip()
 
-    private_match = re.search(r"t\.me/c/(\d+)/(\d+)", link)
+    # روابط القنوات والمجموعات الخاصة، مع دعم http وhttps والمعلمات الإضافية.
+    private_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/c/(\d+)/(\d+)"
+    private_match = re.search(private_pattern, link)
     if private_match:
-        chat_id = int(f"-100{private_match.group(1)}")
-        message_id = int(private_match.group(2))
-        return chat_id, message_id
+        raw_id, msg_id = private_match.groups()
+        return int(f"-100{raw_id}"), int(msg_id)
 
-    public_match = re.search(r"t\.me/([a-zA-Z0-9_]+)/(\d+)", link)
+    # روابط القنوات العامة، مع دعم http وhttps والمعلمات الإضافية.
+    public_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/([a-zA-Z0-9_]+)/(\d+)"
+    public_match = re.search(public_pattern, link)
     if public_match:
-        return public_match.group(1), int(public_match.group(2))
+        username, msg_id = public_match.groups()
+        return username, int(msg_id)
 
     return None, None
 
 
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
-    """مزامنة المحادثات لجلب معلومات الوصول للمعرف المطلوب."""
+    """تحديث كاش الجلسة وإجبار Telegram على التعرف على المعرف الرقمي."""
     try:
         return await client.get_chat(chat_ref)
-    except (PeerIdInvalid, ChannelInvalid):
-        async for dialog in client.get_dialogs(limit=200):
+    except Exception:
+        async for dialog in client.get_dialogs():
             if dialog.chat.id == chat_ref or dialog.chat.username == chat_ref:
                 return dialog.chat
-        raise
+
+        try:
+            return await client.get_chat(chat_ref)
+        except Exception as exc:
+            raise ValueError(
+                f"تعذر الوصول للقناة ({chat_ref}). "
+                "تأكد من انضمام الحساب الشخصي المربوط بالجلسة للقناة، "
+                "أو قم بفتح القناة منه مرة واحدة لتحديث الصلاحيات."
+            ) from exc
 
 
 async def fetch_message_safe(session, parsed_ref: Union[int, str], message_id: int):
