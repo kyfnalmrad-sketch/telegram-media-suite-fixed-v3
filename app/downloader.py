@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from pyrogram import Client
-from pyrogram.errors import SessionPasswordNeeded, RPCError
+from pyrogram.errors import FloodWait, SessionPasswordNeeded, RPCError
 
 TELEGRAM_HOSTS = {
     "t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog",
@@ -55,6 +55,19 @@ URL_START_RE = re.compile(
 )
 
 
+class _DownloadSlot:
+    def __init__(self, session: "TelegramSession") -> None:
+        self.session = session
+
+    async def __aenter__(self) -> "_DownloadSlot":
+        await self.session._wait_for_download_slot()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        del exc_type, exc, traceback
+        self.session._finish_download_slot()
+
+
 class TelegramSession:
     """Own a Pyrogram user client on one event-loop thread."""
 
@@ -73,6 +86,9 @@ class TelegramSession:
         self.pending_hash = ""
         self.error = ""
         self.lock = threading.Lock()
+        self.download_delay_seconds = 3.0
+        self._download_gate: asyncio.Lock | None = None
+        self._last_download_finished = 0.0
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -196,9 +212,29 @@ class TelegramSession:
     async def _download(self, link: str, target_root: str, progress: Callable[[int, int], None]) -> dict[str, Any]:
         if self.state != "ready" or not self.client:
             raise RuntimeError("سجّل الدخول أولًا")
-        chat_ref, message_id = parse_message_link((link or "").strip())
-        message = await self._get_message_with_peer_refresh(chat_ref, message_id)
-        return await self._download_message(message, target_root, progress)
+        async with self._download_slot():
+            chat_ref, message_id = parse_message_link((link or "").strip())
+            message = await self._get_message_with_peer_refresh(chat_ref, message_id)
+            return await self._download_message(message, target_root, progress)
+
+    def _download_slot(self) -> _DownloadSlot:
+        """Serialize downloads and leave a three-second gap between operations."""
+        if self._download_gate is None:
+            self._download_gate = asyncio.Lock()
+        return _DownloadSlot(self)
+
+    async def _wait_for_download_slot(self) -> None:
+        assert self._download_gate is not None
+        await self._download_gate.acquire()
+        elapsed = asyncio.get_running_loop().time() - self._last_download_finished
+        remaining = self.download_delay_seconds - elapsed if self._last_download_finished else 0.0
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    def _finish_download_slot(self) -> None:
+        self._last_download_finished = asyncio.get_running_loop().time()
+        assert self._download_gate is not None
+        self._download_gate.release()
 
     async def _get_message_with_peer_refresh(self, chat_ref: str | int, message_id: int) -> Any:
         """Fetch a message and refresh Telegram's peer cache once when needed."""
@@ -240,7 +276,7 @@ class TelegramSession:
         def on_progress(current: int, total: int) -> None:
             progress(current, total)
 
-        result = await self.client.download_media(message, file_name=str(file_path), progress=on_progress)
+        result = await self._download_media_with_retries(message, file_path, on_progress)
         if not result:
             raise RuntimeError("Telegram لم يُرجع ملفًا")
         downloaded_path = Path(str(result))
@@ -254,6 +290,44 @@ class TelegramSession:
             raise FileNotFoundError(f"لم يتم العثور على الملف بعد التنزيل: {file_path.name}")
         return {"path": str(downloaded_path), "channel": channel, "message_id": message.id,
                 "size": downloaded_path.stat().st_size, "description": context_label}
+
+    async def _download_media_with_retries(
+        self,
+        message: Any,
+        file_path: Path,
+        progress: Callable[[int, int], None],
+        max_retries: int = 3,
+    ) -> Any:
+        """Use Pyrogram's supported downloader with bounded transient retries."""
+        assert self.client is not None
+        for attempt in range(max_retries + 1):
+            try:
+                return await self.client.download_media(
+                    message, file_name=str(file_path), progress=progress
+                )
+            except FloodWait as exc:
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    pass
+                if attempt >= max_retries:
+                    raise
+                await asyncio.sleep(float(getattr(exc, "value", 3)) + 2.0)
+            except (ConnectionError, TimeoutError, OSError):
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    pass
+                if attempt >= max_retries:
+                    raise
+                await asyncio.sleep(2.0 * (attempt + 1))
+            except RPCError:
+                try:
+                    file_path.unlink()
+                except FileNotFoundError:
+                    pass
+                raise
+        raise RuntimeError("انتهت محاولات تنزيل الوسيط")
 
     async def _nearby_label(self, message: Any) -> str:
         own_text = (getattr(message, "caption", None) or getattr(message, "text", None) or "").strip()
@@ -300,8 +374,13 @@ class TelegramSession:
         if not self.loop or not self.client:
             raise RuntimeError("جلسة Telegram غير جاهزة")
         return asyncio.run_coroutine_threadsafe(
-            self._download_message(message, target_root, progress), self.loop
+            self._download_message_spaced(message, target_root, progress), self.loop
         )
+
+    async def _download_message_spaced(self, message: Any, target_root: str,
+                                       progress: Callable[[int, int], None]) -> dict[str, Any]:
+        async with self._download_slot():
+            return await self._download_message(message, target_root, progress)
 
     def fetch_chat(self, chat_ref: str | int) -> Any:
         if not self.loop or not self.client:
