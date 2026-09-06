@@ -174,22 +174,8 @@ setup = SessionSetup()
 
 
 def authorized() -> bool:
-    """Check the optional dashboard token without exposing it in the UI.
-
-    Existing deployments that do not define ``TMD_DASHBOARD_TOKEN`` remain
-    compatible. Once the variable is set, API calls require either a secure
-    dashboard cookie or an Authorization Bearer token. The dashboard route
-    accepts ``?token=...`` once, then exchanges it for the cookie so normal
-    browser fetches do not need to put the secret in every URL.
-    """
-    expected = os.getenv("TMD_DASHBOARD_TOKEN", "").strip()
-    if not expected:
-        return True
-    supplied = request.cookies.get("tmd_dashboard_token", "").strip()
-    authorization = request.headers.get("Authorization", "")
-    if authorization.lower().startswith("bearer "):
-        supplied = authorization[7:].strip()
-    return bool(supplied) and hmac.compare_digest(supplied, expected)
+    """Keep the dashboard open while password protection is not required."""
+    return True
 
 
 def dashboard_token_response(response):
@@ -349,15 +335,6 @@ def health():
 
 @app.get("/")
 def dashboard():
-    if not authorized() and not (
-        os.getenv("TMD_DASHBOARD_TOKEN", "").strip()
-        and request.args.get("token", "").strip()
-        and hmac.compare_digest(
-            request.args.get("token", "").strip(),
-            os.getenv("TMD_DASHBOARD_TOKEN", "").strip(),
-        )
-    ):
-        return json_error("لوحة التحكم محمية؛ أضف token صالحًا إلى الرابط", 401)
     phone = env_first("TELEGRAM_PHONE_NUMBER", "PHONE") or "غير مضبوط"
     html = """<!doctype html>
 <html lang="ar" dir="rtl">
