@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -98,11 +99,34 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
     target.mkdir(parents=True, exist_ok=True)
     file_path = None
     try:
-        file_path = await ubot.download_media(msg, file_name=str(target / ""))
+        last_update = 0.0
+
+        async def progress(current: int, total: int):
+            nonlocal last_update
+            now = time.monotonic()
+            if not processing_msg or (now - last_update < 2 and current < total):
+                return
+            last_update = now
+            percent = int(current * 100 / total) if total else 0
+            filled = min(10, percent // 10)
+            bar = "■" * filled + "□" * (10 - filled)
+            await processing_msg.edit_text(
+                f"⏳ جارٍ جلب الفيديو وإرساله إلى هذه المحادثة...\n[{bar}] {percent}%"
+            )
+
+        file_path = await ubot.download_media(msg, file_name=str(target / ""), progress=progress)
         if not file_path or not os.path.exists(file_path):
             raise RuntimeError("Telegram لم يرجع ملف التنزيل")
         caption = (msg.caption or msg.text or "").strip() or None
-        return {"message": msg, "path": str(file_path), "type": file_type, "caption": caption}
+        chat = getattr(msg, "chat", None)
+        source = getattr(chat, "title", None) or getattr(chat, "username", None) or str(chat_id)
+        return {
+            "message": msg,
+            "path": str(file_path),
+            "type": file_type,
+            "caption": caption,
+            "source": source,
+        }
     except FloodWait as exc:
         if processing_msg:
             await processing_msg.edit_text(f"Telegram طلب الانتظار {exc.value} ثانية ثم أعد المحاولة.")
