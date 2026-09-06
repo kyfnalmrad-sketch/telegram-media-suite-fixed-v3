@@ -1,11 +1,6 @@
-.venv/
 __pycache__/
-*.pyc
-*.log
+*.py[cod]
 .env
-*.tmp
-build/
-dist/
-*.spec
-storage/
-sessions/
+*.session
+*.session-journal
+.tmd-data/

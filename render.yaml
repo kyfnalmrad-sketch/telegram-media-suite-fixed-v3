@@ -5,40 +5,24 @@ services:
     plan: free
     region: frankfurt
     buildCommand: pip install -r requirements.txt
-    startCommand: python3 scripts/render_start.py
+    startCommand: python3 render_start.py
     healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.4
       - key: TMD_SUITE_DATA
         value: /opt/render/project/src/.tmd-data
-      - key: TMD_HOST
-        value: 0.0.0.0
-      - key: TMD_OPEN_BROWSER
-        value: "false"
-      - key: AUTO_START
-        value: "true"
       - key: API_ID
         sync: false
       - key: API_HASH
         sync: false
       - key: BOT_TOKEN
         sync: false
-      - key: PHONE
+      - key: SESSION_STRING
         sync: false
-      - key: ALLOWED_USER_IDS
-        sync: false
-      - key: TMD_SESSION_SETUP_OWNER_ID
-        value: "2104850156"
       - key: TMD_SESSION_B64
         sync: false
       - key: TMD_SESSION_B64_FORCE
         value: "false"
-      - key: TMD_PROXY_URL
-        sync: false
-      - key: TMD_DASHBOARD_TOKEN
-        sync: false
-      - key: RENDER_API_KEY
-        sync: false
-      - key: SELF_ENROLLMENT_ENABLED
-        value: "false"
+      - key: ALLOWED_DOWNLOAD_SIZE
+        value: "50"
