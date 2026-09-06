@@ -400,16 +400,27 @@ class TelegramSession:
             self._download_message_spaced(message, target_root, progress), self.loop
         )
 
-    async def _download_message_spaced(self, message: Any, target_root: str,
-                                       progress: Callable[[int, int], None]) -> dict[str, Any]:
+    async def _download_message_spaced(
+        self,
+        message: Any,
+        target_root: str,
+        progress: Callable[[int, int], None] = None,
+    ) -> dict[str, Any]:
+        """تنزيل الوسائط مع التحقق الآمن من الخواص لتجنب AttributeError"""
         async with self._download_slot():
-            chat_id = getattr(getattr(message, "chat", None), "id", None)
+            if not message:
+                raise ValueError("كائن الرسالة غير موجود")
+
+            chat = getattr(message, "chat", None)
+            chat_id = getattr(chat, "id", None) if chat else None
             msg_id = getattr(message, "id", None)
-            if chat_id and msg_id and self.client:
+
+            if chat_id and msg_id and getattr(self, "client", None):
                 with suppress(Exception):
                     fresh = await self.client.get_messages(chat_id, msg_id)
-                    if fresh and not fresh.empty:
+                    if fresh and not getattr(fresh, "empty", True) and hasattr(fresh, "id"):
                         message = fresh
+
             return await self._download_message(message, target_root, progress)
 
     def fetch_chat(self, chat_ref: str | int) -> Any:
