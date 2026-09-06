@@ -1432,11 +1432,26 @@ class TelegramBotService:
             if user_cli is None:
                 raise RuntimeError("عميل حساب المستخدم غير متاح")
 
-            file_path = await fetch_and_download_media(
-                user_client=user_cli,
-                link=link,
-                output_dir="./downloads",
-            )
+            # TelegramSession owns the user client and its event loop. Submit the
+            # coroutine there instead of awaiting a session-bound Pyrogram client
+            # from the bot's event loop.
+            session_download = getattr(session, "download", None)
+            session_loop = getattr(session, "loop", None)
+            session_client = getattr(session, "client", None)
+            if callable(session_download) and session_loop and session_client is user_cli:
+                download_future = session_download(
+                    link,
+                    "./downloads",
+                    lambda current, total: None,
+                )
+                download_result = await asyncio.wrap_future(download_future)
+                file_path = download_result.get("path") if isinstance(download_result, dict) else download_result
+            else:
+                file_path = await fetch_and_download_media(
+                    user_client=user_cli,
+                    link=link,
+                    output_dir="./downloads",
+                )
             await self.send_downloaded_file(
                 chat_id=message.chat.id,
                 file_path=file_path,
@@ -1460,11 +1475,25 @@ class TelegramBotService:
 
         try:
             sender = self.client if file_size <= MAX_BOT_LIMIT else getattr(self, "user_client", self.client)
-            await sender.send_document(
-                chat_id=chat_id,
-                document=file_path,
-                caption=caption or "✅ تم سحب الملف بنجاح.",
-            )
+            session = self.session_getter()
+            session_loop = getattr(session, "loop", None) if session else None
+            session_client = getattr(session, "client", None) if session else None
+            if session_loop and session_client is sender:
+                upload_future = asyncio.run_coroutine_threadsafe(
+                    sender.send_document(
+                        chat_id=chat_id,
+                        document=file_path,
+                        caption=caption or "✅ تم سحب الملف بنجاح.",
+                    ),
+                    session_loop,
+                )
+                await asyncio.wrap_future(upload_future)
+            else:
+                await sender.send_document(
+                    chat_id=chat_id,
+                    document=file_path,
+                    caption=caption or "✅ تم سحب الملف بنجاح.",
+                )
         finally:
             if os.path.exists(file_path):
                 os.remove(file_path)
