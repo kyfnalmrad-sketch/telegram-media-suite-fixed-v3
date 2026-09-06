@@ -724,6 +724,7 @@ async def fetch_and_download_media(
     link: str,
     output_dir: str = "./downloads",
     progress_callback: Any = None,
+    joining_link: str | None = None,
 ) -> Optional[str]:
     """تحليل الرابط، إجراء فحص شامل للقناة، ثم سحب الوسائط."""
     from bot_service import ensure_peer_resolved, parse_message_link
@@ -731,6 +732,10 @@ async def fetch_and_download_media(
     chat_ref, message_id = parse_message_link(link)
     if not chat_ref or not message_id:
         raise ValueError("صيغة الرابط غير صحيحة، يرجى التأكد من نسخ الرابط بشكل كامل.")
+
+    # مطابقة نظام الأرشيف: الانضمام أولًا عند توفير رابط الدعوة، ثم تحديث peer.
+    if joining_link:
+        await user_client.join_chat(joining_link)
 
     # إجراء الفحص الشامل للقناة وتحديث مرجعها في الجلسة قبل طلب الرسالة.
     await ensure_peer_resolved(user_client, chat_ref)

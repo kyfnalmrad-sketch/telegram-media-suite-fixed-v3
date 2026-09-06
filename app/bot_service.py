@@ -21,7 +21,7 @@ from uuid import uuid4
 
 from pyrogram import Client, filters
 from pyrogram.enums import ParseMode
-from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, PeerIdInvalid
+from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, PeerIdInvalid, UserAlreadyParticipant
 from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 from pyrogram.types import (
     InlineKeyboardButton,
@@ -622,8 +622,15 @@ class TelegramBotService:
                 session = self.session_getter()
                 if not session:
                     raise RuntimeError("جلسة الحساب غير متاحة")
-                await asyncio.wrap_future(session.join_chat(invite_link))
+                try:
+                    await asyncio.wrap_future(session.join_chat(invite_link))
+                except UserAlreadyParticipant:
+                    pass
                 await message.reply_text("تمت إضافة الحساب الشخصي إلى القناة. سأعيد محاولة تنزيل الملف الآن.")
+                original_links = flow.get("links")
+                if original_links:
+                    await self._download_many(message, list(original_links))
+                    return
                 if not original_link:
                     raise ValueError("انتهت بيانات رابط التنزيل، أرسل الرابط من جديد.")
                 await self._execute_approved_download(message, original_link)
@@ -962,7 +969,24 @@ class TelegramBotService:
         self.user_flows.pop(user_id, None)
         action, payload = flow.get("action"), flow.get("payload")
         if action == "links":
-            await self._download_many(message, list(payload or []))
+            links = list(payload or [])
+            private_links = [link for link in links if re.search(r"/(?:c|b)/\d+/(?:\d+/)*\d+", link, re.IGNORECASE)]
+            if private_links:
+                self.user_flows[user_id] = {
+                    "mode": "private_join_link",
+                    "links": links,
+                    "link": private_links[0],
+                    "created_at": time.time(),
+                }
+                await message.reply_text(
+                    "هذا رابط قناة خاصة. أرسل رابط دعوة القناة حتى أستخدم طريقة الوصول الآمنة، "
+                    "أو اضغط «عودة» للإلغاء.",
+                    reply_markup=ReplyKeyboardMarkup(
+                        [[KeyboardButton("عودة")]], resize_keyboard=True, one_time_keyboard=False
+                    ),
+                )
+            else:
+                await self._download_many(message, links)
         elif action == "pending_range":
             await self._download_pending_range(message, str(payload), user_id=user_id)
         elif action == "pending_one" and isinstance(payload, (list, tuple)) and len(payload) == 2:
