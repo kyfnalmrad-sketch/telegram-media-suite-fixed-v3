@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from pyrogram.enums import MessageMediaType
-from pyrogram.errors import ChannelPrivate, FloodWait
+from pyrogram.errors import ChannelInvalid, ChannelPrivate, ChatIdInvalid, FloodWait, PeerIdInvalid
 from pyrogram.types import Message
 
 from ... import DOWNLOAD_DIR, MAX_ALLOWED_DOWNLOAD_SIZE, ubot
@@ -35,9 +35,25 @@ def media_info(message: Message) -> tuple[str | None, int]:
         return kind, 0
 
 
+async def _get_message_with_refresh(chat_id: int | str, msg_id: int) -> Message:
+    try:
+        return await ubot.get_messages(chat_id, msg_id)
+    except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid):
+        wanted_id = int(chat_id) if str(chat_id).lstrip("-").isdigit() else None
+        wanted_username = str(chat_id).lstrip("@").casefold()
+        async for dialog in ubot.get_dialogs():
+            chat = getattr(dialog, "chat", None)
+            if not chat:
+                continue
+            username = str(getattr(chat, "username", "") or "").lstrip("@").casefold()
+            if getattr(chat, "id", None) == wanted_id or (wanted_username and username == wanted_username):
+                return await ubot.get_messages(chat.id, msg_id)
+        raise
+
+
 async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None) -> dict[str, Any] | None:
     try:
-        msg = await ubot.get_messages(chat_id, int(msg_id))
+        msg = await _get_message_with_refresh(chat_id, int(msg_id))
     except ChannelPrivate:
         if processing_msg:
             await processing_msg.edit_text("لا يستطيع حساب الجلسة الوصول إلى هذه القناة.")
