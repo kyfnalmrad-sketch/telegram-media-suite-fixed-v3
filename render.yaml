@@ -18,9 +18,17 @@ services:
         sync: false
       - key: BOT_TOKEN
         sync: false
+      - key: PHONE
+        sync: false
       - key: SESSION_STRING
         sync: false
       - key: TMD_SESSION_B64
         sync: false
       - key: TMD_SESSION_B64_FORCE
         value: "false"
+      - key: TMD_DASHBOARD_TOKEN
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        sync: false

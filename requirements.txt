@@ -1,3 +1,4 @@
 https://github.com/KurimuzonAkuma/pyrogram/archive/v2.1.32.zip
 python-dotenv>=1.0,<2
 gunicorn>=22,<24
+Flask>=3,<4
