@@ -92,7 +92,7 @@ async def fetch_message_safe(session, parsed_ref: Union[int, str], message_id: i
     except (PeerIdInvalid, ChannelInvalid, ChannelPrivate, ChatIdInvalid, KeyError):
         # في حال عدم تعرّف الجلسة على المعرّف، يتم إنعاش القائمة ثم إعادة المحاولة
         chat = await ensure_peer_resolved(client, parsed_ref)
-        return await client.get_messages(chat, message_id)
+        return await client.get_messages(chat.id, message_id)
     except Exception:
         pass
 

@@ -252,7 +252,7 @@ class TelegramSession:
             except Exception:
                 # Keep the original Telegram error when the peer cannot be resolved.
                 raise first_error
-            return await self.client.get_messages(chat, message_id)
+            return await self.client.get_messages(chat.id, message_id)
 
     async def _download_message(self, message: Any, target_root: str,
                                 progress: Callable[[int, int], None]) -> dict[str, Any]:
