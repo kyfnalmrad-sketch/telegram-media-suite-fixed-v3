@@ -611,7 +611,10 @@ class TelegramBotService:
                     ),
                 )
                 return
-            await self._verify_channel_membership(message, flow)
+            # The user confirmed membership; do not add another application-side
+            # membership gate. Continue directly to the existing channel actions.
+            flow["mode"] = "channel_choice"
+            await self._send_channel_choice(message, flow["chat"], flow.get("from_message_link", False))
             return
         if mode == "channel_join_confirm":
             if text not in {"نعم انضم", "انضم", "yes join"}:
