@@ -59,10 +59,17 @@ async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
         if str(status).casefold() in {"left", "kicked", "banned"}:
             raise ValueError("الحساب الشخصي ليس مشتركًا في هذه القناة الخاصة.")
 
+    async def visit_chat(chat: Any) -> None:
+        """Open the dialog/history once so Pyrogram refreshes the channel peer."""
+        await client.get_chat(chat.id)
+        async for _ in client.get_chat_history(chat.id, limit=1):
+            break
+
     try:
         # محاولة الوصول المباشر
         chat = await client.get_chat(normalized_ref)
         await client.resolve_peer(chat.id)
+        await visit_chat(chat)
         await verify_membership(chat)
         return chat
     except Exception:
@@ -76,6 +83,7 @@ async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
                 # explicitly as well because numeric /c links depend on access_hash.
                 try:
                     await client.resolve_peer(dialog.chat.id)
+                    await visit_chat(dialog.chat)
                     await verify_membership(dialog.chat)
                 except Exception as exc:
                     raise ValueError(
@@ -87,6 +95,7 @@ async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
         try:
             chat = await client.get_chat(normalized_ref)
             await client.resolve_peer(chat.id)
+            await visit_chat(chat)
             await verify_membership(chat)
             return chat
         except Exception:
