@@ -49,10 +49,21 @@ def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[i
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
     """فحص كامل ومباشر لمحادثات الحساب لتحديث كاش القنوات."""
     normalized_ref = int(chat_ref) if isinstance(chat_ref, str) and chat_ref.lstrip("-").isdigit() else chat_ref
+    is_numeric_channel = isinstance(normalized_ref, int) and str(normalized_ref).startswith("-100")
+
+    async def verify_membership(chat: Any) -> None:
+        if not is_numeric_channel:
+            return
+        member = await client.get_chat_member(chat.id, "me")
+        status = getattr(getattr(member, "status", None), "value", getattr(member, "status", None))
+        if str(status).casefold() in {"left", "kicked", "banned"}:
+            raise ValueError("الحساب الشخصي ليس مشتركًا في هذه القناة الخاصة.")
+
     try:
         # محاولة الوصول المباشر
         chat = await client.get_chat(normalized_ref)
         await client.resolve_peer(chat.id)
+        await verify_membership(chat)
         return chat
     except Exception:
         # فحص شامل لكافة المحادثات والقنوات التي ينضم لها الحساب
@@ -65,9 +76,10 @@ async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
                 # explicitly as well because numeric /c links depend on access_hash.
                 try:
                     await client.resolve_peer(dialog.chat.id)
+                    await verify_membership(dialog.chat)
                 except Exception as exc:
                     raise ValueError(
-                        "تعذر تحديث مرجع القناة. تأكد من أن الحساب الشخصي عضو في القناة."
+                        "تعذر التحقق من عضوية الحساب أو تحديث مرجع القناة. تأكد من أن الحساب الشخصي مشترك فيها."
                     ) from exc
                 return dialog.chat
 
@@ -75,6 +87,7 @@ async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
         try:
             chat = await client.get_chat(normalized_ref)
             await client.resolve_peer(chat.id)
+            await verify_membership(chat)
             return chat
         except Exception:
             raise ValueError(
