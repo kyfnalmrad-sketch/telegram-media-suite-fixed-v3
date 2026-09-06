@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
 import hmac
 import json
 import os
@@ -30,6 +31,7 @@ SESSION_DIR = DATA_DIR / "sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_FILE = SESSION_DIR / "UserBot.session"
 SERVICE_LOG = DATA_DIR / "service_events.jsonl"
+STATE_LOCK = DATA_DIR / "jobs.lock"
 _SESSION_REVOKED = False
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
@@ -349,8 +351,14 @@ def mutate_job(job_id: int, action: str) -> dict:
     path = DATA_DIR / "jobs.json"
     temporary = path.with_suffix(".json.tmp")
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    STATE_LOCK.touch(exist_ok=True)
+    with STATE_LOCK.open("r+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, path)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
     return job
 
 

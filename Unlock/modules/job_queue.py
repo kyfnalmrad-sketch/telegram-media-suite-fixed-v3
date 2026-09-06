@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 import threading
@@ -12,6 +13,7 @@ from .. import DATA_DIR
 
 MAX_JOBS = int(os.getenv("MAX_QUEUE_JOBS", "20"))
 STATE_FILE = DATA_DIR / "jobs.json"
+STATE_LOCK = DATA_DIR / "jobs.lock"
 
 
 class JobQueue:
@@ -40,8 +42,14 @@ class JobQueue:
         payload = {"version": 1, "next_id": self.next_id, "jobs": self.jobs}
         temporary = STATE_FILE.with_suffix(".json.tmp")
         with self.lock:
-            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(temporary, STATE_FILE)
+            STATE_LOCK.touch(exist_ok=True)
+            with STATE_LOCK.open("r+") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                    os.replace(temporary, STATE_FILE)
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def add(self, chat_id: int, user_id: int, link: str, parsed: tuple[str | int, int]) -> dict:
         active = [j for j in self.jobs.values() if j.get("status") in {"ready", "queued", "processing", "downloading", "uploading", "paused"}]
