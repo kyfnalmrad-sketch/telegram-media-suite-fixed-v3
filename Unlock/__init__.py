@@ -66,13 +66,20 @@ def require_clients() -> tuple[Client, Client]:
     except (TypeError, ValueError) as exc:
         raise RuntimeError("API_ID يجب أن يكون رقمًا") from exc
     session_file = restore_render_session()
-    if not SESSION_STRING and session_file is None:
+    # A session uploaded from the dashboard must win over a stale
+    # SESSION_STRING left in Render. Otherwise the bot starts with the old
+    # account, fails during user-client startup, and the dashboard only shows
+    # a misleading generic "stopped" state.
+    local_session_file = SESSION_DIR / "UserBot.session"
+    use_file_session = session_file is not None or (local_session_file.exists() and not SESSION_STRING)
+    if not SESSION_STRING and not use_file_session:
         raise RuntimeError("Render يحتاج SESSION_STRING أو TMD_SESSION_B64 لجلسة الحساب الشخصي")
     bot = Client("Unlock", api_id=api_id, api_hash=API_HASH, bot_token=BOT_TOKEN, plugins={"root": "Unlock.modules"}, workdir=str(DATA_DIR))
-    if SESSION_STRING:
-        user = Client("UserBot", api_id=api_id, api_hash=API_HASH, session_string=SESSION_STRING, plugins={"root": "Unlock.modules.UserBot"})
-    else:
+    if use_file_session:
         user = Client("UserBot", api_id=api_id, api_hash=API_HASH, plugins={"root": "Unlock.modules.UserBot"}, workdir=str(SESSION_DIR))
+    else:
+        user = Client("UserBot", api_id=api_id, api_hash=API_HASH, session_string=SESSION_STRING, plugins={"root": "Unlock.modules.UserBot"})
+    logging.info("Using %s Telegram user session", "transferred file" if use_file_session else "SESSION_STRING")
     return bot, user
 
 

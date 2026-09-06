@@ -33,10 +33,12 @@ SESSION_FILE = SESSION_DIR / "UserBot.session"
 SERVICE_LOG = DATA_DIR / "service_events.jsonl"
 SERVICE_LOCK = DATA_DIR / "service_events.lock"
 STATE_LOCK = DATA_DIR / "jobs.lock"
+BOT_OUTPUT_LOG = DATA_DIR / "bot_process.log"
 _SESSION_REVOKED = False
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
 _bot_started_at: float | None = None
+_bot_output_handle = None
 _bot_lock = threading.Lock()
 
 
@@ -172,10 +174,38 @@ setup = SessionSetup()
 
 
 def authorized() -> bool:
-    # The dashboard is intentionally open so Render/browser never shows an
-    # HTTP Basic username/password prompt. Telegram verification is handled
-    # only by the explicit code and 2FA steps in the page.
-    return True
+    """Check the optional dashboard token without exposing it in the UI.
+
+    Existing deployments that do not define ``TMD_DASHBOARD_TOKEN`` remain
+    compatible. Once the variable is set, API calls require either a secure
+    dashboard cookie or an Authorization Bearer token. The dashboard route
+    accepts ``?token=...`` once, then exchanges it for the cookie so normal
+    browser fetches do not need to put the secret in every URL.
+    """
+    expected = os.getenv("TMD_DASHBOARD_TOKEN", "").strip()
+    if not expected:
+        return True
+    supplied = request.cookies.get("tmd_dashboard_token", "").strip()
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        supplied = authorization[7:].strip()
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+def dashboard_token_response(response):
+    """Set the token cookie after a valid one-time query-string login."""
+    expected = os.getenv("TMD_DASHBOARD_TOKEN", "").strip()
+    supplied = request.args.get("token", "").strip()
+    if expected and supplied and hmac.compare_digest(supplied, expected):
+        response.set_cookie(
+            "tmd_dashboard_token",
+            supplied,
+            max_age=86400,
+            httponly=True,
+            secure=request.is_secure,
+            samesite="Strict",
+        )
+    return response
 
 
 def json_error(message: str, status: int = 400):
@@ -231,12 +261,37 @@ def dashboard_login():
 
 def bot_process_snapshot() -> dict:
     running = _bot_process is not None and _bot_process.poll() is None
+    exit_code = None if running or _bot_process is None else _bot_process.poll()
+    output = ""
+    if not running and _bot_process is not None:
+        try:
+            output = "\n".join(BOT_OUTPUT_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-12:])
+        except OSError:
+            output = "تعذر قراءة سجل تشغيل البوت"
     return {
         "running": running,
         "pid": _bot_process.pid if running else None,
-        "exit_code": None if running or _bot_process is None else _bot_process.poll(),
+        "exit_code": exit_code,
+        "last_output": output,
         "uptime_seconds": int(time.time() - _bot_started_at) if running and _bot_started_at else 0,
     }
+
+
+def start_bot_process() -> subprocess.Popen:
+    """Start the worker while keeping its traceback available in the dashboard."""
+    global _bot_output_handle
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    if _bot_output_handle is not None and not _bot_output_handle.closed:
+        _bot_output_handle.close()
+    _bot_output_handle = BOT_OUTPUT_LOG.open("a", encoding="utf-8", buffering=1)
+    _bot_output_handle.write(f"\n--- bot start {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    return subprocess.Popen(
+        [sys.executable, "-u", "-m", "Unlock"],
+        cwd=str(Path(__file__).parent),
+        stdout=_bot_output_handle,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
 
 
 def service_snapshot() -> dict:
@@ -287,11 +342,22 @@ def service_snapshot() -> dict:
 
 @app.get("/health")
 def health():
-    return jsonify(service_snapshot())
+    # Render only needs a small liveness response. Queue contents and service
+    # events are private and are exposed through the authenticated status API.
+    return jsonify({"ok": True, "service": "running"})
 
 
 @app.get("/")
 def dashboard():
+    if not authorized() and not (
+        os.getenv("TMD_DASHBOARD_TOKEN", "").strip()
+        and request.args.get("token", "").strip()
+        and hmac.compare_digest(
+            request.args.get("token", "").strip(),
+            os.getenv("TMD_DASHBOARD_TOKEN", "").strip(),
+        )
+    ):
+        return json_error("لوحة التحكم محمية؛ أضف token صالحًا إلى الرابط", 401)
     phone = env_first("TELEGRAM_PHONE_NUMBER", "PHONE") or "غير مضبوط"
     html = """<!doctype html>
 <html lang="ar" dir="rtl">
@@ -326,7 +392,7 @@ async function loadAll(){const s=await fetch('/api/status').catch(()=>null);if(!
 	setInterval(loadAll,3000);loadAll();
 </script></body></html>"""
     response = make_response(html.replace("__PHONE__", phone))
-    return response
+    return dashboard_token_response(response)
 
 
 @app.get("/api/jobs")
@@ -399,6 +465,11 @@ def refresh_status():
         return json_error("غير مصرح", 401)
     bot = bot_process_snapshot()
     record_service_event("status_checked", f"bot_running={bot['running']}")
+    if not bot["running"] and bot["exit_code"] is not None:
+        detail = f"exit_code={bot['exit_code']}"
+        if bot["last_output"]:
+            detail += f" | {bot['last_output'][-1200:]}"
+        record_service_event("bot_exited", detail)
     snapshot = service_snapshot()
     snapshot["checked_now"] = True
     return jsonify(snapshot)
@@ -540,7 +611,7 @@ def bot_start():
         if not has_session:
             return json_error("أكمل تسجيل جلسة Telegram أو رحّلها أولًا")
         setup.close()
-        _bot_process = subprocess.Popen([sys.executable, "-m", "Unlock"], cwd=str(Path(__file__).parent))
+        _bot_process = start_bot_process()
         _bot_started_at = time.time()
         record_service_event("bot_start_requested", f"pid={_bot_process.pid}")
     return jsonify({"ok": True, "message": "تم تشغيل البوت"})
@@ -549,6 +620,6 @@ def bot_start():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
     if env_first("TELEGRAM_SESSION_STRING", "SESSION_STRING", "TMD_SESSION_B64") or SESSION_FILE.exists():
-        _bot_process = subprocess.Popen([sys.executable, "-m", "Unlock"], cwd=str(Path(__file__).parent))
+        _bot_process = start_bot_process()
         _bot_started_at = time.time()
     app.run(host="0.0.0.0", port=port, threaded=True)

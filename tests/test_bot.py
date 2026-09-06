@@ -1,33 +1,28 @@
-# pip install pytest pytest-asyncio
-
 import pytest
-import logging
+from unittest.mock import AsyncMock
+
 from pyrogram import Client
-from pyrogram.errors import FloodWait
-from unittest.mock import patch
-
-# Test to check bot starts and stops correctly
 
 @pytest.mark.asyncio
-async def test_bot_start_stop():
-    bot = Client("Unlock")  # Use your actual Client configuration here
+async def test_bot_start_stop_calls_pyrogram_lifecycle():
+    bot = Client("test-bot", api_id=12345, api_hash="a" * 32, bot_token="token")
+    bot.start = AsyncMock()
+    bot.stop = AsyncMock()
 
-    # Test bot start
-    with patch.object(bot, 'start', return_value=None):  # Mocking start method
-        await bot.start()  # Should run without errors
+    await bot.start()
+    await bot.stop()
 
-    # Test bot stop
-    with patch.object(bot, 'stop', return_value=None):  # Mocking stop method
-        await bot.stop()  # Should run without errors
+    bot.start.assert_awaited_once()
+    bot.stop.assert_awaited_once()
+    assert not bot.is_connected
 
-    assert bot.is_alive() is False  # Check bot is stopped
 
-# Test for invalid token (simulate error handling)
-@pytest.mark.asyncio
-async def test_bot_invalid_token():
-    invalid_bot = Client("Unlock", bot_token="invalid_token")
+def test_require_clients_fails_with_clear_configuration_error(monkeypatch):
+    from Unlock import require_clients
 
-    # Simulating an invalid token error
-    with pytest.raises(FloodWait):
-        await invalid_bot.start()
+    monkeypatch.setattr("Unlock.API_ID", None)
+    monkeypatch.setattr("Unlock.API_HASH", None)
+    monkeypatch.setattr("Unlock.BOT_TOKEN", None)
 
+    with pytest.raises(RuntimeError, match="API_ID وAPI_HASH وBOT_TOKEN"):
+        require_clients()
