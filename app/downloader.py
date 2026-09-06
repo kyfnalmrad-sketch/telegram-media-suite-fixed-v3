@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from pyrogram import Client
-from pyrogram.errors import ChannelInvalid, FileReferenceExpired, FloodWait, PeerIdInvalid, SessionPasswordNeeded, RPCError
+from pyrogram.errors import ChannelInvalid, ChatIdInvalid, FileReferenceExpired, FloodWait, PeerIdInvalid, SessionPasswordNeeded, RPCError
 
 TELEGRAM_HOSTS = {
     "t.me", "telegram.me", "www.t.me", "www.telegram.me", "telegram.dog",
@@ -215,6 +215,8 @@ class TelegramSession:
             raise RuntimeError("سجّل الدخول أولًا")
         async with self._download_slot():
             chat_ref, message_id = parse_message_link((link or "").strip())
+            if not chat_ref or not message_id:
+                raise ValueError("صيغة الرابط غير صحيحة، يرجى التأكد من نسخ الرابط بشكل كامل.")
             message = await self._get_message_with_peer_refresh(chat_ref, message_id)
             return await self._download_message(message, target_root, progress)
 
@@ -242,23 +244,13 @@ class TelegramSession:
         assert self.client is not None
         try:
             return await self.client.get_messages(chat_ref, message_id)
-        except (PeerIdInvalid, ChannelInvalid) as first_error:
+        except (PeerIdInvalid, ChannelInvalid, ChatIdInvalid) as first_error:
             try:
-                await self.client.get_chat(chat_ref)
-            except (PeerIdInvalid, ChannelInvalid):
-                async for dialog in self.client.get_dialogs(limit=100):
-                    if dialog.chat.id == chat_ref:
-                        break
-                else:
-                    raise first_error
-            return await self.client.get_messages(chat_ref, message_id)
-        except Exception as first_error:
-            if type(first_error).__name__ != "ChatIdInvalid":
-                raise
-            try:
-                await self.client.get_chat(chat_ref)
+                # Reuse the full dialog scan used by the bot's direct download path.
+                from bot_service import ensure_peer_resolved
+                await ensure_peer_resolved(self.client, chat_ref)
             except Exception:
-                # Keep the original error: it carries the most useful Telegram cause.
+                # Keep the original Telegram error when the peer cannot be resolved.
                 raise first_error
             return await self.client.get_messages(chat_ref, message_id)
 
@@ -543,27 +535,31 @@ def _message_path_parts(parts: list[str]) -> tuple[str | int, int] | None:
 
 
 def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[int]]:
-    """تحليل روابط تليجرام بدعم النطاقات المتعددة والمعلمات الخاصة."""
+    """تحليل روابط رسائل Telegram العامة والخاصة وروابط المواضيع."""
     if not link:
         return None, None
 
-    link = link.strip()
+    value, parsed = _parsed_telegram_url(link)
+    if parsed.scheme.lower() == "tg":
+        query = parse_qs(parsed.query)
+        action = parsed.netloc.lower()
+        if action == "resolve" and query.get("domain") and query.get("post"):
+            return _channel_ref(query["domain"][0]), int(query["post"][0])
+        if action in {"privatepost", "msg_url", "openmessage"}:
+            chat = query.get("channel", query.get("chat_id", query.get("user_id", [""])))[0]
+            message = query.get("post", query.get("message_id", [""]))[0]
+            if chat and message and message.isdigit():
+                return _channel_ref(chat), int(message)
+        return None, None
 
-    # روابط القنوات والمجموعات الخاصة، مع دعم http وhttps والمعلمات الإضافية.
-    private_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/c/(\d+)/(\d+)"
-    private_match = re.search(private_pattern, link)
-    if private_match:
-        raw_id, msg_id = private_match.groups()
-        return int(f"-100{raw_id}"), int(msg_id)
-
-    # روابط القنوات العامة، مع دعم http وhttps والمعلمات الإضافية.
-    public_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/([a-zA-Z0-9_]+)/(\d+)"
-    public_match = re.search(public_pattern, link)
-    if public_match:
-        username, msg_id = public_match.groups()
-        return username, int(msg_id)
-
-    return None, None
+    host = parsed.netloc.lower().removesuffix(".")
+    if host not in TELEGRAM_HOSTS:
+        return None, None
+    parts = [part for part in parsed.path.split("/") if part]
+    if parts and parts[0].lower() == "s":
+        parts = parts[1:]
+    result = _message_path_parts(parts)
+    return result if result else (None, None)
 
 
 def parse_chat_link(link: str) -> str | int:

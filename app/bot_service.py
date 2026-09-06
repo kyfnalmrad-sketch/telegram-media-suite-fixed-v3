@@ -35,33 +35,15 @@ from downloader import (
     TelegramSession,
     extract_telegram_links,
     fetch_and_download_media,
+    parse_message_link as parse_downloader_message_link,
     parse_chat_link,
     safe_name,
 )
 
 
 def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[int]]:
-    """تحليل روابط تليجرام بدعم النطاقات المتعددة والمعلمات الخاصة."""
-    if not link:
-        return None, None
-
-    link = link.strip()
-
-    # روابط القنوات والمجموعات الخاصة، مع دعم http وhttps والمعلمات الإضافية.
-    private_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/c/(\d+)/(\d+)"
-    private_match = re.search(private_pattern, link)
-    if private_match:
-        raw_id, msg_id = private_match.groups()
-        return int(f"-100{raw_id}"), int(msg_id)
-
-    # روابط القنوات العامة، مع دعم http وhttps والمعلمات الإضافية.
-    public_pattern = r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/([a-zA-Z0-9_]+)/(\d+)"
-    public_match = re.search(public_pattern, link)
-    if public_match:
-        username, msg_id = public_match.groups()
-        return username, int(msg_id)
-
-    return None, None
+    """استخدام محلل الروابط الموحد في downloader لكل مسارات البوت."""
+    return parse_downloader_message_link(link)
 
 
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
