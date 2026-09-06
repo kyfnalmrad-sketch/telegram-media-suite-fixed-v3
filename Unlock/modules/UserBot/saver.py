@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -101,7 +102,7 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
     try:
         last_update = 0.0
 
-        async def progress(current: int, total: int):
+        def progress(current: int, total: int):
             nonlocal last_update
             now = time.monotonic()
             if not processing_msg or (now - last_update < 2 and current < total):
@@ -110,8 +111,10 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
             percent = int(current * 100 / total) if total else 0
             filled = min(10, percent // 10)
             bar = "■" * filled + "□" * (10 - filled)
-            await processing_msg.edit_text(
-                f"⏳ جارٍ جلب الفيديو وإرساله إلى هذه المحادثة...\n[{bar}] {percent}%"
+            asyncio.create_task(
+                processing_msg.edit_text(
+                    f"⏬ جارٍ جلب الوسائط إلى البوت...\n[{bar}] {percent}%"
+                )
             )
 
         file_path = await ubot.download_media(msg, file_name=str(target / ""), progress=progress)
