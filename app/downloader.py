@@ -248,11 +248,11 @@ class TelegramSession:
             try:
                 # Reuse the full dialog scan used by the bot's direct download path.
                 from bot_service import ensure_peer_resolved
-                await ensure_peer_resolved(self.client, chat_ref)
+                chat = await ensure_peer_resolved(self.client, chat_ref)
             except Exception:
                 # Keep the original Telegram error when the peer cannot be resolved.
                 raise first_error
-            return await self.client.get_messages(chat_ref, message_id)
+            return await self.client.get_messages(chat, message_id)
 
     async def _download_message(self, message: Any, target_root: str,
                                 progress: Callable[[int, int], None]) -> dict[str, Any]:
@@ -451,8 +451,10 @@ class TelegramSession:
         )
 
     async def _fetch_channel_messages(self, chat_ref: str | int, limit: int) -> list[Any]:
+        from bot_service import ensure_peer_resolved
+        chat = await ensure_peer_resolved(self.client, chat_ref)
         results: list[Any] = []
-        async for item in self.client.get_chat_history(chat_ref, limit=0):
+        async for item in self.client.get_chat_history(chat.id, limit=0):
             results.append(item)
             if limit and len(results) >= limit:
                 break
@@ -468,8 +470,10 @@ class TelegramSession:
 
     async def _fetch_messages_by_time(self, chat_ref: str | int, start_time: Any,
                                       end_time: Any, limit: int) -> list[Any]:
+        from bot_service import ensure_peer_resolved
+        chat = await ensure_peer_resolved(self.client, chat_ref)
         results: list[Any] = []
-        async for item in self.client.get_chat_history(chat_ref, limit=0):
+        async for item in self.client.get_chat_history(chat.id, limit=0):
             if item.date and item.date < start_time:
                 break
             if item.date and start_time <= item.date <= end_time:

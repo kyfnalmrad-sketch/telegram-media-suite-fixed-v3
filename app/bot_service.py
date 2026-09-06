@@ -47,76 +47,52 @@ def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[i
 
 
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
-    """فحص كامل ومباشر لمحادثات الحساب لتحديث كاش القنوات."""
+    """Resolve a channel without treating a history-read failure as non-membership."""
     normalized_ref = int(chat_ref) if isinstance(chat_ref, str) and chat_ref.lstrip("-").isdigit() else chat_ref
-    is_numeric_channel = isinstance(normalized_ref, int) and str(normalized_ref).startswith("-100")
+    wanted_username = str(chat_ref).lstrip("@").casefold()
 
-    async def verify_membership(chat: Any) -> None:
-        if not is_numeric_channel:
-            return
-        member = await client.get_chat_member(chat.id, "me")
-        status = getattr(getattr(member, "status", None), "value", getattr(member, "status", None))
-        if str(status).casefold() in {"left", "kicked", "banned"}:
-            raise ValueError("الحساب الشخصي ليس مشتركًا في هذه القناة الخاصة.")
-
-    async def visit_chat(chat: Any) -> None:
-        """Open the dialog/history once so Pyrogram refreshes the channel peer."""
-        await client.get_chat(chat.id)
-        async for _ in client.get_chat_history(chat.id, limit=1):
-            break
+    async def resolve(chat: Any) -> Any:
+        await client.resolve_peer(chat.id)
+        return chat
 
     try:
-        # محاولة الوصول المباشر
-        chat = await client.get_chat(normalized_ref)
-        await client.resolve_peer(chat.id)
-        await visit_chat(chat)
-        await verify_membership(chat)
-        return chat
-    except Exception:
-        # فحص شامل لكافة المحادثات والقنوات التي ينضم لها الحساب
+        return await resolve(await client.get_chat(normalized_ref))
+    except Exception as direct_error:
         async for dialog in client.get_dialogs():
-            if dialog.chat.id == normalized_ref or (
-                dialog.chat.username
-                and dialog.chat.username.lower().lstrip("@") == str(chat_ref).lower().lstrip("@")
+            chat = getattr(dialog, "chat", None)
+            if not chat:
+                continue
+            chat_username = str(getattr(chat, "username", "") or "").lstrip("@").casefold()
+            if getattr(chat, "id", None) == normalized_ref or (
+                wanted_username and chat_username == wanted_username
             ):
-                # get_dialogs normally fills Pyrogram's peer database; resolve it
-                # explicitly as well because numeric /c links depend on access_hash.
                 try:
-                    await client.resolve_peer(dialog.chat.id)
-                    await visit_chat(dialog.chat)
-                    await verify_membership(dialog.chat)
-                except Exception as exc:
+                    return await resolve(chat)
+                except Exception as resolve_error:
                     raise ValueError(
-                        "تعذر التحقق من عضوية الحساب أو تحديث مرجع القناة. تأكد من أن الحساب الشخصي مشترك فيها."
-                    ) from exc
-                return dialog.chat
-
-        # محاولة أخيرة بعد تحديث بيانات الجلسة بالكامل
-        try:
-            chat = await client.get_chat(normalized_ref)
-            await client.resolve_peer(chat.id)
-            await visit_chat(chat)
-            await verify_membership(chat)
-            return chat
-        except Exception:
-            raise ValueError(
-                "الحساب الشخصي ليس عضواً في هذه القناة، أو أن القناة غير متاحة حالياً."
-            )
+                        "وجدت القناة في حسابك، لكن تعذر تحديث مرجعها مؤقتًا. أعد المحاولة بعد ثوانٍ."
+                    ) from resolve_error
+        raise ValueError(
+            "لم أجد هذه القناة في محادثات الحساب. تأكد من أن الحساب الشخصي مشترك فيها "
+            "وأن الرابط يشير إلى الرسالة الصحيحة."
+        ) from direct_error
 
 
 async def fetch_message_safe(session, parsed_ref: Union[int, str], message_id: int):
     """جلب الرسالة مع معالجة المعرفات الرقمية القادمة من روابط t.me/c/"""
     if not parsed_ref or not message_id:
         return None
+    client = getattr(session, "client", None) or getattr(session, "user_client", None)
+    if client is None:
+        return None
 
     try:
         # محاولة جلب الرسالة مباشرة عبر user_client
-        return await session.user_client.get_messages(parsed_ref, message_id)
-    except (PeerIdInvalid, ChannelInvalid, KeyError):
+        return await client.get_messages(parsed_ref, message_id)
+    except (PeerIdInvalid, ChannelInvalid, ChannelPrivate, ChatIdInvalid, KeyError):
         # في حال عدم تعرّف الجلسة على المعرّف، يتم إنعاش القائمة ثم إعادة المحاولة
-        if isinstance(parsed_ref, int):
-            await ensure_peer_resolved(session.user_client, parsed_ref)
-            return await session.user_client.get_messages(parsed_ref, message_id)
+        chat = await ensure_peer_resolved(client, parsed_ref)
+        return await client.get_messages(chat, message_id)
     except Exception:
         pass
 
