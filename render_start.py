@@ -31,6 +31,7 @@ SESSION_DIR = DATA_DIR / "sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_FILE = SESSION_DIR / "UserBot.session"
 SERVICE_LOG = DATA_DIR / "service_events.jsonl"
+SERVICE_LOCK = DATA_DIR / "service_events.lock"
 STATE_LOCK = DATA_DIR / "jobs.lock"
 _SESSION_REVOKED = False
 app = Flask(__name__)
@@ -183,15 +184,21 @@ def json_error(message: str, status: int = 400):
 
 def record_service_event(event: str, details: str = ""):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    entry = {"at": int(time.time()), "event": event, "details": details}
-    try:
-        lines = SERVICE_LOG.read_text(encoding="utf-8").splitlines()[-99:]
-    except OSError:
-        lines = []
-    lines.append(json.dumps(entry, ensure_ascii=False))
-    temporary = SERVICE_LOG.with_suffix(".tmp")
-    temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.replace(temporary, SERVICE_LOG)
+    entry = {"at": int(time.time()), "source": "render", "event": event, "details": details}
+    SERVICE_LOCK.touch(exist_ok=True)
+    with SERVICE_LOCK.open("r+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                lines = SERVICE_LOG.read_text(encoding="utf-8").splitlines()[-199:]
+            except OSError:
+                lines = []
+            lines.append(json.dumps(entry, ensure_ascii=False))
+            temporary = SERVICE_LOG.with_suffix(".tmp")
+            temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            os.replace(temporary, SERVICE_LOG)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def read_service_events(limit: int = 30) -> list[dict]:
@@ -202,7 +209,9 @@ def read_service_events(limit: int = 30) -> list[dict]:
     events = []
     for line in lines:
         try:
-            events.append(json.loads(line))
+            event = json.loads(line)
+            event.setdefault("source", "unknown")
+            events.append(event)
         except (ValueError, TypeError):
             continue
     return events
@@ -294,7 +303,7 @@ def dashboard():
 *{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#09111f,#111d31 55%,#0b1425);color:var(--text);font-family:Tahoma,Arial,sans-serif;line-height:1.6}.wrap{max-width:1180px;margin:0 auto;padding:28px 18px}.header{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:22px}.brand h1{margin:0;font-size:28px}.brand p{margin:4px 0 0;color:var(--muted)}.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--amber);margin-left:7px}.dot.ok{background:var(--green)}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}.card,.panel{background:rgba(18,29,49,.92);border:1px solid var(--line);border-radius:16px;box-shadow:0 12px 28px #0003}.card{padding:16px}.card .label{color:var(--muted);font-size:13px}.card .value{font-size:23px;font-weight:700;margin-top:4px}.panel{padding:18px;margin-bottom:18px}.panel h2{font-size:18px;margin:0 0 14px}.actions{display:flex;flex-wrap:wrap;gap:8px}.actions button,button{border:1px solid #3a5a80;background:#1d3858;color:var(--text);border-radius:9px;padding:10px 14px;cursor:pointer}.actions button:hover,button:hover{background:#28527d}.danger{border-color:#843d4a!important}.forms{display:grid;grid-template-columns:1fr 1fr;gap:16px}.formbox{background:var(--panel2);padding:14px;border-radius:12px}.formbox h3{margin:0 0 8px;font-size:15px}.formbox input{width:100%;padding:10px;background:#0b1526;color:var(--text);border:1px solid var(--line);border-radius:8px;margin:5px 0 8px}.hint,#result{color:var(--muted);font-size:13px}.job{border:1px solid var(--line);border-radius:12px;padding:14px;margin:10px 0;background:#0e192b}.jobtop{display:flex;justify-content:space-between;gap:12px}.phase{color:var(--blue);font-weight:700}.meta{color:var(--muted);font-size:13px}.bar{height:9px;background:#263650;border-radius:20px;overflow:hidden;margin:10px 0}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:20px}.jobactions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.jobactions button{padding:6px 10px;font-size:12px}.log{font-family:ui-monospace,monospace;background:#091321;border-radius:9px;padding:10px;white-space:pre-wrap;color:#b9c9df;font-size:12px;max-height:180px;overflow:auto}.error{color:var(--red)}.success{color:var(--green)}@media(max-width:820px){.grid{grid-template-columns:repeat(2,1fr)}.forms{grid-template-columns:1fr}}@media(max-width:480px){.grid{grid-template-columns:1fr}.header{display:block}}
 </style></head>
 <body><main class="wrap">
-<header class="header"><div class="brand"><h1>Telegram Media Suite</h1><p><span id="botDot" class="dot"></span>لوحة العمليات والمراقبة الحية</p></div><div id="lastUpdate" class="hint">آخر تحديث: —</div></header>
+<header class="header"><div class="brand"><h1>Telegram Media Suite</h1><p><span id="botDot" class="dot"></span>لوحة العمليات والمراقبة الحية</p></div><div class="actions"><button onclick="checkBotNow()">تحقق من حالة البوت الآن</button><div id="lastUpdate" class="hint">آخر تحديث: —</div></div></header>
 <section class="grid"><div class="card"><div class="label">خدمة Render</div><div id="renderState" class="value">جارٍ التحقق</div><div id="renderMeta" class="hint">—</div></div><div class="card"><div class="label">حالة البوت</div><div id="botState" class="value">جارٍ التحقق</div><div id="botMeta" class="hint">—</div></div><div class="card"><div class="label">عامل العمليات</div><div id="workerState" class="value">—</div><div id="workerMeta" class="hint">—</div></div><div class="card"><div class="label">جلسة Telegram</div><div id="sessionState" class="value">—</div><div id="sessionMeta" class="hint">—</div></div><div class="card"><div class="label">تخزين الحالة</div><div id="storageState" class="value">—</div><div id="storageMeta" class="hint">—</div></div><div class="card"><div class="label">العمليات الجارية</div><div id="activeCount" class="value">0</div><div id="totalCount" class="hint">إجمالي: 0</div></div></section>
 <section class="panel"><h2>إعداد الجلسة وتشغيل البوت</h2><p class="hint">رقم الهاتف المضبوط في Render: <b>__PHONE__</b></p><div class="forms"><div class="formbox"><h3>1. بدء جلسة Telegram</h3><button onclick="startSession()">بدء إرسال الكود</button><input id="code" inputmode="numeric" placeholder="كود Telegram" autocomplete="one-time-code"><button onclick="submitCode()">تحقق من الكود</button><input id="password" type="password" placeholder="كلمة مرور التحقق بخطوتين"><button onclick="submitPassword()">تحقق من كلمة المرور</button></div><div class="formbox"><h3>2. الترحيل والتشغيل</h3><p class="hint">بعد نجاح الجلسة اضغط ترحيل الجلسة، ثم شغّل البوت.</p><div class="actions"><button onclick="transfer()">ترحيل الجلسة</button><button class="danger" onclick="resetSession()">إلغاء الجلسة المحفوظة</button><button onclick="startBot()">تشغيل البوت</button></div><p id="result"></p></div></div></section>
 <section class="panel"><div class="jobtop"><h2>العمليات الحية</h2><button onclick="loadAll()">تحديث الآن</button></div><div id="jobs">جارٍ تحميل العمليات...</div></section>
@@ -310,6 +319,7 @@ function jobButtons(j){let a='';if(j.status==='ready')a+='<button onclick="fetch
 	function renderJobs(data){const rows=Object.values(data.jobs||{}).sort((a,b)=>b.id-a.id).slice(0,20);document.getElementById('jobs').innerHTML=rows.length?rows.map(j=>{let p=Math.max(0,Math.min(100,Number(j.progress||0)));let total=Number(j.total||j.size||0);return '<article class="job"><div class="jobtop"><b>العملية #'+j.id+'</b><span class="phase">'+esc(statusName[j.status]||j.status)+'</span></div><div>'+esc(j.phase||'—')+'</div><div class="meta">النوع: '+esc(j.media_type||'غير محدد')+' • المصدر: '+esc(j.source||j.chat_ref||'غير محدد')+'</div><div class="meta">الرابط: '+esc(shortUrl(j.link))+'</div>'+phaseBars(j)+'<div class="meta">'+p+'%'+(total?' • '+bytes(j.current||0)+' / '+bytes(total):'')+(j.speed?' • '+bytes(j.speed)+'/ث':'')+' • آخر تحديث: '+new Date((j.updated_at||0)*1000).toLocaleTimeString()+'</div>'+(j.error?'<div class="error">السبب: '+esc(j.error)+'</div><div class="hint">الحل: '+esc(j.error_solution||'إعادة المحاولة')+'</div>':'')+'<div class="jobactions">'+jobButtons(j)+'</div></article>'}).join(''):'<p class="hint">لا توجد عمليات.</p>';window.jobsCache=data.jobs||{}}
 function showLog(id){const j=window.jobsCache[id];if(!j)return;document.getElementById('liveLog').textContent=(j.events||[]).slice(-30).join('\n')||'لا توجد أحداث مسجلة.';window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})}
 async function post(url,body={}){const result=document.getElementById('result');result.textContent='جارٍ تنفيذ الطلب...';try{const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let x={};try{x=await r.json()}catch(_){x={error:'استجابة غير صالحة من الخدمة'}}result.textContent=x.error||x.message||(r.ok?'تم التنفيذ':'فشل الطلب');await loadAll();return x}catch(e){result.textContent='تعذر الاتصال بالخدمة: '+(e.message||'خطأ غير معروف');return {ok:false,error:'تعذر الاتصال بالخدمة'}}}
+	async function checkBotNow(){const result=document.getElementById('result');result.textContent='جارٍ التحقق من حالة البوت والخدمة...';try{const r=await fetch('/api/status/refresh',{method:'POST'});const x=await r.json();result.textContent=x.bot&&x.bot.running?'البوت يعمل الآن — PID '+x.bot.pid:'البوت متوقف الآن';await loadAll()}catch(e){result.textContent='تعذر التحقق من حالة البوت: '+(e.message||'خطأ غير معروف')}}
 	async function startSession(){await post('/api/session/start')};async function submitCode(){await post('/api/session/code',{value:document.getElementById('code').value})};async function submitPassword(){await post('/api/session/password',{value:document.getElementById('password').value})};async function transfer(){await post('/api/session/transfer')};async function resetSession(){if(confirm('سيتم حذف الجلسة المحلية وTMD_SESSION_B64 من Render. هل تريد المتابعة؟'))await post('/api/session/reset')};async function startBot(){await post('/api/bot/start')};
 async function fetchJob(id){await post('/api/jobs/'+id+'/fetch')};async function cancelJob(id){await post('/api/jobs/'+id+'/cancel')};async function retryJob(id){await post('/api/jobs/'+id+'/retry')};
 async function loadAll(){const s=await fetch('/api/status').catch(()=>null);if(!s){document.getElementById('lastUpdate').textContent='تعذر الاتصال بلوحة الحالة';document.getElementById('renderState').textContent='غير متصل';document.getElementById('renderMeta').textContent='تحقق من خدمة Render';return}let x=null;try{x=await s.json()}catch(_){x=null}if(!s.ok||!x||!x.ok){document.getElementById('lastUpdate').textContent='فشل تحميل حالة الخدمة';document.getElementById('renderState').textContent='خطأ';document.getElementById('renderMeta').textContent='HTTP '+s.status;return}const active=Object.entries(x.queue.counts||{}).filter(([k])=>['queued','processing','downloading','uploading'].includes(k)).reduce((a,[,v])=>a+v,0);document.getElementById('renderState').textContent=x.render.service==='running'?'يعمل':'متوقف';document.getElementById('renderMeta').textContent='منفذ '+x.render.port;document.getElementById('botState').textContent=x.bot.running?'يعمل':'متوقف';document.getElementById('botDot').className='dot '+(x.bot.running?'ok':'');document.getElementById('botMeta').textContent=x.bot.running?'PID '+x.bot.pid+' • '+x.bot.uptime_seconds+'ث':'شغّل البوت من الزر أدناه';document.getElementById('workerState').textContent=x.worker.state==='running'?'يعمل':'متوقف';document.getElementById('workerMeta').textContent=x.worker.description;const sessionNames={idle:'غير مهيأة',configured:'جلسة محفوظة، جاهزة للتشغيل',starting:'جارٍ بدء الجلسة',code:'بانتظار كود Telegram',password:'بانتظار كلمة مرور 2FA',ready:'جاهزة',error:'خطأ'};document.getElementById('sessionState').textContent=sessionNames[x.session.state]||x.session.state||'غير معروف';document.getElementById('sessionMeta').textContent=x.session.error|| (x.session.source_configured?'مصدر الجلسة مضبوط':'مصدر الجلسة غير مضبوط');document.getElementById('storageState').textContent=x.render.storage_writable?'متاح':'مشكلة';document.getElementById('storageMeta').textContent=x.render.storage_writable?'حفظ الحالة يعمل':'تحقق من مساحة Render';document.getElementById('activeCount').textContent=active;document.getElementById('totalCount').textContent='إجمالي: '+x.queue.total;document.getElementById('serviceLog').textContent=(x.service_events||[]).slice().reverse().map(e=>new Date((e.at||0)*1000).toLocaleTimeString()+' — '+e.event+(e.details?' — '+e.details:'')).join('\n')||'لا توجد أحداث خدمة بعد.';const j=await fetch('/api/jobs').catch(()=>null);if(j&&j.ok){const jobs=await j.json().catch(()=>null);if(jobs)renderJobs(jobs)}document.getElementById('lastUpdate').textContent='آخر تحديث: '+new Date().toLocaleTimeString()}
@@ -381,6 +391,17 @@ def service_status():
     if not authorized():
         return json_error("غير مصرح", 401)
     return jsonify(service_snapshot())
+
+
+@app.post("/api/status/refresh")
+def refresh_status():
+    if not authorized():
+        return json_error("غير مصرح", 401)
+    bot = bot_process_snapshot()
+    record_service_event("status_checked", f"bot_running={bot['running']}")
+    snapshot = service_snapshot()
+    snapshot["checked_now"] = True
+    return jsonify(snapshot)
 
 
 @app.get("/api/session/status")

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from .. import DATA_DIR
+from .service_log import record_service_event
 
 MAX_JOBS = int(os.getenv("MAX_QUEUE_JOBS", "20"))
 STATE_FILE = DATA_DIR / "jobs.json"
@@ -99,6 +100,9 @@ class JobQueue:
         job["last_activity"] = int(time.time())
         job["updated_at"] = int(time.time())
         self.save()
+        event_name = values.get("event") or values.get("status") or values.get("phase")
+        if event_name and (values.get("status") in {"queued", "downloading", "uploading", "completed", "failed", "cancelled"} or values.get("event")):
+            record_service_event("job_update", str(event_name), job_id=job_id)
 
     def get(self, job_id: int) -> dict | None:
         return self.jobs.get(job_id)
