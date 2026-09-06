@@ -167,6 +167,18 @@ def json_error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
 
 
+def dashboard_login():
+    return make_response(
+        """<!doctype html><meta charset='utf-8'><title>دخول لوحة الجلسة</title>
+        <style>body{font-family:Arial;max-width:520px;margin:70px auto;line-height:1.8;direction:rtl}input,button{padding:11px;margin:4px;width:100%;box-sizing:border-box}button{cursor:pointer}</style>
+        <h2>دخول لوحة إعداد جلسة Telegram</h2>
+        <p>أدخل قيمة <b>TMD_DASHBOARD_TOKEN</b> الموجودة في إعدادات Render. هذه ليست اسم مستخدم أو كلمة مرور Telegram.</p>
+        <form method='get' action='/'><input name='token' type='password' autocomplete='off' placeholder='مفتاح لوحة الإدارة' required><button type='submit'>دخول</button></form>
+        """,
+        401,
+    )
+
+
 @app.get("/health")
 def health():
     return jsonify({"ok": True, "service": "restricted-content-saver", "session": setup.snapshot()})
@@ -175,7 +187,7 @@ def health():
 @app.get("/")
 def dashboard():
     if not authorized():
-        return json_error("أدخل TMD_DASHBOARD_TOKEN في رابط الصفحة أو ترويسة X-Dashboard-Token", 401)
+        return dashboard_login()
     state = setup.snapshot()
     response = make_response(
         f"""<!doctype html><meta charset='utf-8'><title>إعداد جلسة Telegram</title>
