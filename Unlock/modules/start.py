@@ -6,8 +6,8 @@ from .ui_state import CONTROL_MESSAGES
 
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("انزل الوسائط", callback_data="download_video")],
-        [InlineKeyboardButton("📋 العمليات", callback_data="queue:list")],
+        [InlineKeyboardButton("📥 جلب وسائط", callback_data="download_video")],
+        [InlineKeyboardButton("📋 العمليات", callback_data="queue:list"), InlineKeyboardButton("📊 حالة الطابور", callback_data="queue:status")],
         [InlineKeyboardButton("⏸ إيقاف الجديد", callback_data="queue:pause"), InlineKeyboardButton("▶️ استئناف", callback_data="queue:resume")],
     ])
 
@@ -16,8 +16,9 @@ def menu() -> InlineKeyboardMarkup:
 async def start(_: Client, message: Message):
     control = await message.reply_text(
         "أهلًا بك. هذه لوحة التحكم.\n"
-        "أرسل رابط Telegram مباشرة أو اضغط «انزل الوسائط».\n"
-        "يدعم الفيديو والصوت والصور والمستندات وPDF، ويعالج الروابط بالتسلسل.",
+        "أرسل رابط Telegram مباشرة أو اضغط «📥 جلب وسائط».\n"
+        "يدعم الفيديو والصوت والصور والمستندات وPDF، ويعالج الروابط بالتسلسل.\n"
+        "ستظهر نسبة الجلب والإرسال داخل رسالة العملية نفسها.",
         reply_markup=menu(),
     )
     CONTROL_MESSAGES[message.chat.id] = control.id

@@ -63,6 +63,7 @@ class JobQueue:
             "progress": 0,
             "current": 0,
             "total": 0,
+            "speed": 0,
             "error": "",
             "error_code": "",
             "error_solution": "",

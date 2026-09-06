@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from urllib.parse import urlparse
 
 from pyrogram import Client, filters
@@ -11,6 +10,7 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, 
 from .UserBot.saver import cleanup, inspect_media, saver
 from .job_queue import queue
 from .media_upload import resolve_upload_path
+from .progress import ProgressReporter
 from .errors import explain_error
 from .start import menu
 from .ui_state import CONTROL_MESSAGES
@@ -33,12 +33,6 @@ def parse_message_link(link: str) -> tuple[str | int, int] | None:
     return None
 
 
-def progress_text(prefix: str, current: int, total: int) -> str:
-    percent = int(current * 100 / total) if total else 0
-    filled = min(10, percent // 10)
-    return f"{prefix}\n[{('■' * filled) + ('□' * (10 - filled))}] {percent}%"
-
-
 async def process_job(bot: Client, job: dict) -> None:
     status = None
     status_id = job.get("status_message_id")
@@ -48,34 +42,36 @@ async def process_job(bot: Client, job: dict) -> None:
         status = await bot.send_message(job["chat_id"], f"⏳ العملية #{job['id']} قيد البدء...")
         queue.update(job["id"], status_message_id=status.id)
     queue.update(job["id"], phase="جاري جلب الوسائط من Telegram", status="downloading")
-    result = await saver(status, job["chat_ref"], job["message_id"], status, job_id=job["id"])
+    download_reporter = ProgressReporter(status, job["id"])
+    result = await saver(
+        status,
+        job["chat_ref"],
+        job["message_id"],
+        status,
+        job_id=job["id"],
+        progress_reporter=download_reporter,
+    )
     if not result:
         if job.get("status") == "cancelled":
             return
         details = job.get("error") or "تعذر جلب الوسائط من Telegram."
         solution = job.get("error_solution") or "اضغط إعادة المحاولة بعد التأكد من وصول الحساب إلى القناة."
         queue.update(job["id"], status="failed", phase="فشل جلب الوسائط", event=f"السبب: {details}")
-        await status.edit_text(f"❌ فشلت العملية #{job['id']} أثناء الجلب\nالسبب: {details}\nالحل المقترح: {solution}")
+        await download_reporter.finish(f"❌ فشلت العملية #{job['id']} أثناء الجلب\nالسبب: {details}\nالحل المقترح: {solution}")
         return
     try:
         caption = result.get("caption") or "بدون وصف"
         source = result.get("source") or job["chat_ref"]
         details = f"\n\nالمصدر: {source}\nرقم الرسالة: {job['message_id']}\nرقم العملية: #{job['id']}"
         caption = (caption + details)[:1024]
-        queue.update(job["id"], phase="جاري إرسال الوسائط إلى البوت", status="uploading", progress=0)
+        queue.update(job["id"], phase="جاري إرسال الوسائط إلى البوت", status="uploading", progress=0, current=0, total=0, speed=0)
         upload_path = resolve_upload_path(result)
-        last_update = 0.0
+        upload_reporter = ProgressReporter(status, job["id"])
 
         def upload_progress(current: int, total: int):
-            nonlocal last_update
             if job.get("status") == "cancelled":
                 raise RuntimeError("تم إلغاء العملية")
-            now = time.monotonic()
-            if now - last_update < 2 and current < total:
-                return
-            last_update = now
-            queue.update(job["id"], progress=int(current * 100 / total) if total else 0, current=current, total=total)
-            asyncio.create_task(status.edit_text(progress_text("📤 جاري إرسال الوسائط إلى البوت...", current, total)))
+            upload_reporter.update_sync("📤 جاري إرسال الوسائط إلى البوت...", current, total)
 
         # Use an open handle so Pyrogram cannot mistake an unavailable path
         # for a Telegram file id. The handle also keeps the file available for
@@ -91,12 +87,17 @@ async def process_job(bot: Client, job: dict) -> None:
                 await bot.send_voice(job["chat_id"], media_file, caption=caption, progress=upload_progress)
             else:
                 await bot.send_document(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
-        queue.update(job["id"], status="completed", phase="اكتمل — جاهز للمشاهدة والتنزيل", progress=100)
-        await status.edit_text(f"✅ اكتملت العملية #{job['id']}\nالوسائط جاهزة للمشاهدة أو الحفظ من رسالة Telegram.")
+        await upload_reporter.finish(
+            f"✅ اكتملت العملية #{job['id']}\nالوسائط جاهزة للمشاهدة أو الحفظ من رسالة Telegram.",
+            status="completed",
+            phase="اكتمل — جاهز للمشاهدة والتنزيل",
+            progress=100,
+        )
     except Exception as exc:
         code, details, solution = explain_error(exc, "الإرسال")
         queue.update(job["id"], status="failed", phase="فشل إرسال الوسائط", error_code=code, error=details, error_message=details, error_solution=solution, event=f"الإرسال: {details}")
-        await status.edit_text(f"❌ فشلت العملية #{job['id']} أثناء الإرسال\nالسبب: {details}\nالحل المقترح: {solution}")
+        reporter = locals().get("upload_reporter") or download_reporter
+        await reporter.finish(f"❌ فشلت العملية #{job['id']} أثناء الإرسال\nالسبب: {details}\nالحل المقترح: {solution}", status="failed", phase="فشل إرسال الوسائط")
     finally:
         await cleanup(result)
 
@@ -152,11 +153,70 @@ async def fetch_job(bot: Client, query: CallbackQuery):
     await query.answer("بدأت عملية الجلب")
     await query.message.edit_text(
         f"📥 العملية #{job_id} في قائمة الانتظار للجلب...\n"
-        "سيتم تحديث هذه الرسالة عند بدء النقل."
+        "سيتم تحديث هذه الرسالة عند بدء النقل.",
+        reply_markup=menu(),
     )
     # Start/reuse the worker from the button itself. This also covers a
     # dashboard-started bot where the worker was not created during boot.
     await queue.start(lambda current: process_job(bot, current))
+
+
+def operation_buttons(job: dict) -> list[list[InlineKeyboardButton]]:
+    job_id = job["id"]
+    status = job.get("status")
+    rows: list[list[InlineKeyboardButton]] = []
+    if status == "ready":
+        rows.append([InlineKeyboardButton(f"⬇️ جلب #{job_id}", callback_data=f"job:fetch:{job_id}")])
+    elif status in {"queued", "processing", "downloading", "uploading", "paused"}:
+        rows.append([InlineKeyboardButton(f"🛑 إلغاء #{job_id}", callback_data=f"job:cancel:{job_id}")])
+    elif status in {"failed", "cancelled"}:
+        rows.append([InlineKeyboardButton(f"🔁 إعادة #{job_id}", callback_data=f"job:retry:{job_id}")])
+    rows.append([InlineKeyboardButton(f"🔎 تفاصيل #{job_id}", callback_data=f"job:view:{job_id}")])
+    return rows
+
+
+def operation_text(job: dict, detailed: bool = False) -> str:
+    status = job.get("status", "unknown")
+    progress = int(job.get("progress") or 0)
+    current = int(job.get("current") or 0)
+    total = int(job.get("total") or job.get("size") or 0)
+    speed = int(job.get("speed") or 0)
+    status_names = {
+        "ready": "جاهز للجلب", "queued": "في الانتظار", "processing": "قيد المعالجة",
+        "downloading": "جاري الجلب", "uploading": "جاري الإرسال", "completed": "اكتمل",
+        "failed": "فشل", "cancelled": "أُلغي",
+    }
+    lines = [
+        f"العملية #{job['id']} — {status_names.get(status, status)}",
+        f"المرحلة: {job.get('phase') or 'غير محددة'}",
+        f"التقدم: {progress}%",
+    ]
+    if total:
+        lines.append(f"الحجم: {format_bytes(current)} / {format_bytes(total)}")
+    if speed:
+        lines.append(f"السرعة: {format_bytes(speed)}/ث")
+    if job.get("error"):
+        lines.extend([f"السبب: {job['error']}", f"الحل: {job.get('error_solution') or 'أعد المحاولة بعد التحقق من المصدر.'}"])
+    if detailed:
+        events = job.get("events") or []
+        if events:
+            lines.append("\nآخر الأحداث:")
+            lines.extend(f"• {event}" for event in events[-8:])
+    return "\n".join(lines)[:3900]
+
+
+def queue_status_text() -> str:
+    jobs = queue.recent(100)
+    names = ("ready", "queued", "downloading", "uploading", "completed", "failed", "cancelled")
+    counts = {name: sum(1 for job in jobs if job.get("status") == name) for name in names}
+    state = "متوقفة مؤقتًا" if not queue.pause_event.is_set() else "تعمل"
+    return (
+        "📊 حالة الطابور\n"
+        f"الحالة: {state}\n"
+        f"الجاهز: {counts['ready']} | المنتظر: {counts['queued']}\n"
+        f"الجلب: {counts['downloading']} | الإرسال: {counts['uploading']}\n"
+        f"المكتمل: {counts['completed']} | الفاشل: {counts['failed']} | الملغى: {counts['cancelled']}"
+    )
 
 
 @Client.on_callback_query(filters.regex("^download_video$"))
@@ -168,41 +228,53 @@ async def download_button(_: Client, query: CallbackQuery):
     )
 
 
-@Client.on_callback_query(filters.regex("^queue:(pause|resume|list)$"))
+@Client.on_callback_query(filters.regex(r"^queue:(pause|resume|list|status)$"))
 async def queue_control(_: Client, query: CallbackQuery):
     action = query.data.split(":", 1)[1]
     if action == "pause":
         queue.pause()
         text = "⏸ تم إيقاف بدء العمليات الجديدة. العملية الحالية تكمل حتى تنتهي."
+        markup = menu()
     elif action == "resume":
         queue.resume()
         text = "▶️ تم استئناف قائمة الانتظار."
+        markup = menu()
+    elif action == "status":
+        text = queue_status_text()
+        markup = menu()
     else:
         jobs = queue.recent(10)
-        text = "📋 العمليات:\n" + "\n".join(
-            f"#{j['id']} — {j['phase']}" + (f"\nالسبب: {j.get('error')}\nالحل: {j.get('error_solution')}" if j.get('error') else "")
-            for j in jobs
-        ) if jobs else "لا توجد عمليات."
+        text = "📋 العمليات\n\n" + "\n\n".join(operation_text(job) for job in jobs) if jobs else "📋 لا توجد عمليات."
         rows = []
-        for job in jobs[:6]:
-            buttons = []
-            if job.get("status") not in {"completed", "cancelled"}:
-                buttons.append(InlineKeyboardButton(f"🛑 إلغاء #{job['id']}", callback_data=f"job:cancel:{job['id']}"))
-            if job.get("status") in {"failed", "cancelled"}:
-                buttons.append(InlineKeyboardButton(f"🔁 إعادة #{job['id']}", callback_data=f"job:retry:{job['id']}"))
-            if buttons:
-                rows.append(buttons)
+        for job in jobs[:8]:
+            rows.extend(operation_buttons(job))
+        rows.append([InlineKeyboardButton("🔄 تحديث", callback_data="queue:list"), InlineKeyboardButton("🏠 الرئيسية", callback_data="download_video")])
+        markup = InlineKeyboardMarkup(rows)
     await query.answer("تم")
-    await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(rows) if action == "list" and rows else None)
+    await query.message.reply_text(text[:3900], reply_markup=markup)
+
+
+@Client.on_callback_query(filters.regex(r"^job:view:(\d+)$"))
+async def job_details(_: Client, query: CallbackQuery):
+    job_id = int(query.data.split(":")[-1])
+    job = queue.get(job_id)
+    await query.answer("تم")
+    if not job:
+        await query.message.reply_text("العملية غير موجودة.", reply_markup=menu())
+        return
+    await query.message.reply_text(operation_text(job, detailed=True), reply_markup=InlineKeyboardMarkup(operation_buttons(job)))
 
 
 @Client.on_callback_query(filters.regex(r"^job:(cancel|retry):(\d+)$"))
-async def job_control(_: Client, query: CallbackQuery):
+async def job_control(bot: Client, query: CallbackQuery):
     action, raw_id = query.data.split(":")[1:]
     job_id = int(raw_id)
     ok = queue.cancel(job_id) if action == "cancel" else queue.retry(job_id)
+    if ok and action == "retry":
+        await queue.start(lambda current: process_job(bot, current))
     await query.answer("تم" if ok else "لا يمكن تنفيذ العملية")
-    await query.message.reply_text(f"{'🛑 أُلغيَت' if action == 'cancel' else '🔁 أُعيدت'} العملية #{job_id}." if ok else "العملية غير متاحة.")
+    job = queue.get(job_id)
+    await query.message.reply_text(operation_text(job) if job else "العملية غير متاحة.", reply_markup=InlineKeyboardMarkup(operation_buttons(job)) if job else menu())
 
 
 @Client.on_message(filters.private & filters.command("save"))

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +11,7 @@ from pyrogram.types import Message
 
 from ... import DOWNLOAD_DIR, MAX_ALLOWED_DOWNLOAD_SIZE, ubot
 from ..errors import explain_error
+from ..progress import ProgressReporter
 
 
 def bytes_to_mb(value: int) -> float:
@@ -77,7 +76,14 @@ async def inspect_media(chat_id: int | str, msg_id: int) -> dict[str, Any] | Non
     }
 
 
-async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Message | None = None, job_id: int | None = None) -> dict[str, Any] | None:
+async def saver(
+    m: Message,
+    chat_id: int | str,
+    msg_id: int,
+    processing_msg: Message | None = None,
+    job_id: int | None = None,
+    progress_reporter: ProgressReporter | None = None,
+) -> dict[str, Any] | None:
     def record_error(exc: Exception, phase: str):
         if not job_id:
             return
@@ -85,6 +91,7 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
         code, message, solution = explain_error(exc, phase)
         queue.update(job_id, error=message, error_code=code, error_message=message, error_solution=solution, event=f"{phase}: {message}")
 
+    reporter = progress_reporter or ProgressReporter(processing_msg, job_id)
     try:
         msg = await _get_message_with_refresh(chat_id, int(msg_id))
     except ChannelPrivate as exc:
@@ -120,27 +127,17 @@ async def saver(m: Message, chat_id: int | str, msg_id: int, processing_msg: Mes
     target.mkdir(parents=True, exist_ok=True)
     file_path = None
     try:
-        last_update = 0.0
-
         def progress(current: int, total: int):
-            nonlocal last_update
             # The queue may cancel an active transfer between chunks.
             from ..job_queue import queue
-            if job_id:
-                # The caller stores the operation id on the transient message when available.
-                if queue.get(job_id) and queue.get(job_id).get("status") == "cancelled":
-                    raise RuntimeError("تم إلغاء العملية")
-            now = time.monotonic()
-            if not processing_msg or (now - last_update < 2 and current < total):
-                return
-            last_update = now
-            percent = int(current * 100 / total) if total else 0
-            filled = min(10, percent // 10)
-            bar = "■" * filled + "□" * (10 - filled)
-            asyncio.create_task(
-                processing_msg.edit_text(
-                    f"⏬ جارٍ جلب الوسائط إلى البوت...\n[{bar}] {percent}%"
-                )
+            if job_id and queue.get(job_id) and queue.get(job_id).get("status") == "cancelled":
+                raise RuntimeError("تم إلغاء العملية")
+            reporter.update_sync(
+                "⏬ جارٍ جلب الوسائط إلى البوت...",
+                current,
+                total,
+                phase="جاري جلب الوسائط من Telegram",
+                status="downloading",
             )
 
         file_path = await ubot.download_media(msg, file_name=str(target / ""), progress=progress)
