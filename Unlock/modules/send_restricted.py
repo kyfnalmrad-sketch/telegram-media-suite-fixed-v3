@@ -13,7 +13,7 @@ from .media_upload import resolve_upload_path
 from .progress import ProgressReporter
 from .errors import explain_error
 from .start import menu
-from .ui_state import CONTROL_MESSAGES
+from .ui_state import CONTROL_MESSAGES, edit_callback_control
 
 LINK_RE = re.compile(r"https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>]+", re.I)
 
@@ -228,8 +228,8 @@ async def download_button(_: Client, query: CallbackQuery):
     )
 
 
-@Client.on_callback_query(filters.regex(r"^queue:(pause|resume|list|status)$"))
-async def queue_control(_: Client, query: CallbackQuery):
+@Client.on_callback_query(filters.regex(r"^queue:(pause|resume|list|status|logs|refresh|help)$"))
+async def queue_control(bot: Client, query: CallbackQuery):
     action = query.data.split(":", 1)[1]
     if action == "pause":
         queue.pause()
@@ -242,6 +242,19 @@ async def queue_control(_: Client, query: CallbackQuery):
     elif action == "status":
         text = queue_status_text()
         markup = menu()
+    elif action == "logs":
+        events = []
+        for job in queue.recent(10):
+            for event in (job.get("events") or [])[-3:]:
+                events.append(f"#{job['id']} — {event}")
+        text = "🧾 السجلات الأخيرة\n\n" + "\n".join(events[-24:]) if events else "🧾 لا توجد سجلات بعد."
+        markup = menu()
+    elif action == "help":
+        text = "❓ المساعدة\n\nأرسل رابط رسالة Telegram أو استخدم زر «📥 جلب وسائط». ثم راجع «📋 العمليات» لمتابعة الجلب والإرسال، ويمكنك الإلغاء أو إعادة المحاولة من تفاصيل العملية."
+        markup = menu()
+    elif action == "refresh":
+        text = queue_status_text()
+        markup = menu()
     else:
         jobs = queue.recent(10)
         text = "📋 العمليات\n\n" + "\n\n".join(operation_text(job) for job in jobs) if jobs else "📋 لا توجد عمليات."
@@ -251,7 +264,7 @@ async def queue_control(_: Client, query: CallbackQuery):
         rows.append([InlineKeyboardButton("🔄 تحديث", callback_data="queue:list"), InlineKeyboardButton("🏠 الرئيسية", callback_data="download_video")])
         markup = InlineKeyboardMarkup(rows)
     await query.answer("تم")
-    await query.message.reply_text(text[:3900], reply_markup=markup)
+    await edit_callback_control(query, text[:3900], markup)
 
 
 @Client.on_callback_query(filters.regex(r"^job:view:(\d+)$"))
@@ -260,9 +273,9 @@ async def job_details(_: Client, query: CallbackQuery):
     job = queue.get(job_id)
     await query.answer("تم")
     if not job:
-        await query.message.reply_text("العملية غير موجودة.", reply_markup=menu())
+        await edit_callback_control(query, "العملية غير موجودة.", menu())
         return
-    await query.message.reply_text(operation_text(job, detailed=True), reply_markup=InlineKeyboardMarkup(operation_buttons(job)))
+    await edit_callback_control(query, operation_text(job, detailed=True), InlineKeyboardMarkup(operation_buttons(job)))
 
 
 @Client.on_callback_query(filters.regex(r"^job:(cancel|retry):(\d+)$"))
@@ -274,7 +287,7 @@ async def job_control(bot: Client, query: CallbackQuery):
         await queue.start(lambda current: process_job(bot, current))
     await query.answer("تم" if ok else "لا يمكن تنفيذ العملية")
     job = queue.get(job_id)
-    await query.message.reply_text(operation_text(job) if job else "العملية غير متاحة.", reply_markup=InlineKeyboardMarkup(operation_buttons(job)) if job else menu())
+    await edit_callback_control(query, operation_text(job) if job else "العملية غير متاحة.", InlineKeyboardMarkup(operation_buttons(job)) if job else menu())
 
 
 @Client.on_message(filters.private & filters.command("save"))

@@ -1,27 +1,27 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from .ui_state import CONTROL_MESSAGES
+from .ui_state import CONTROL_MESSAGES, update_control
 
 
 def menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📥 جلب وسائط", callback_data="download_video")],
-        [InlineKeyboardButton("📋 العمليات", callback_data="queue:list"), InlineKeyboardButton("📊 حالة الطابور", callback_data="queue:status")],
+        [InlineKeyboardButton("📋 العمليات", callback_data="queue:list"), InlineKeyboardButton("📊 الحالة", callback_data="queue:status")],
+        [InlineKeyboardButton("🧾 السجلات", callback_data="queue:logs"), InlineKeyboardButton("🔄 تحديث", callback_data="queue:refresh")],
         [InlineKeyboardButton("⏸ إيقاف الجديد", callback_data="queue:pause"), InlineKeyboardButton("▶️ استئناف", callback_data="queue:resume")],
+        [InlineKeyboardButton("❓ مساعدة", callback_data="queue:help")],
     ])
 
 
 @Client.on_message(filters.private & filters.command("start"))
-async def start(_: Client, message: Message):
-    control = await message.reply_text(
-        "أهلًا بك. هذه لوحة التحكم.\n"
-        "أرسل رابط Telegram مباشرة أو اضغط «📥 جلب وسائط».\n"
-        "يدعم الفيديو والصوت والصور والمستندات وPDF، ويعالج الروابط بالتسلسل.\n"
-        "ستظهر نسبة الجلب والإرسال داخل رسالة العملية نفسها.",
-        reply_markup=menu(),
+async def start(bot: Client, message: Message):
+    await update_control(
+        bot,
+        message.chat.id,
+        "أهلًا بك في لوحة التحكم.\nأرسل رابط Telegram مباشرة أو اختر قسمًا من القائمة.\nستظهر حالة الجلب والإرسال والسجل في نفس رسالة التحكم.",
+        menu(),
     )
-    CONTROL_MESSAGES[message.chat.id] = control.id
 
 
 @Client.on_message(filters.private & filters.command("help"))
@@ -39,5 +39,4 @@ async def help_command(bot: Client, message: Message):
             return
         except Exception:
             pass
-    control = await message.reply_text("أرسل رابط Telegram مباشرة.", reply_markup=menu())
-    CONTROL_MESSAGES[message.chat.id] = control.id
+    await update_control(bot, message.chat.id, "أرسل رابط Telegram مباشرة أو اختر قسمًا من القائمة.", menu())
