@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from urllib.parse import urlparse
 
@@ -13,6 +14,7 @@ from .media_upload import resolve_upload_path
 from .progress import ProgressReporter
 from .errors import explain_error
 from .start import menu
+from .service_log import record_service_event
 from .ui_state import CONTROL_MESSAGES, edit_callback_control
 
 LINK_RE = re.compile(r"https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s<>]+", re.I)
@@ -113,6 +115,11 @@ async def enqueue_link(bot: Client, message: Message, link: str) -> None:
             await message.reply_text("الرابط لا يحتوي على فيديو أو صوت أو صورة أو مستند قابل للإرسال.")
             return
     except Exception as exc:
+        logging.exception("Failed to inspect Telegram link")
+        record_service_event(
+            "job_inspection_failed",
+            f"chat={parsed[0]} message={parsed[1]} error={type(exc).__name__}: {exc}",
+        )
         await message.reply_text(f"تعذر تحليل الرابط: {type(exc).__name__}")
         return
     try:

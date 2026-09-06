@@ -18,6 +18,15 @@ async def main() -> None:
     rbot = ubot = None
     try:
         rbot, ubot = require_clients()
+        # saver.py imports the package-level client references. Keep those
+        # references synchronized with the clients created for this process;
+        # otherwise link inspection reaches ``None.get_messages`` and reports
+        # the misleading AttributeError seen in the bot chat.
+        import Unlock
+        from .modules.UserBot import saver as saver_module
+        Unlock.rbot = rbot
+        Unlock.ubot = ubot
+        saver_module.ubot = ubot
         await rbot.start()
         await ubot.start()
         await queue.start(lambda job: process_job(rbot, job))
