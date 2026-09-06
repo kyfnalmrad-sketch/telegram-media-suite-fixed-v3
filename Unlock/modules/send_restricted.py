@@ -121,15 +121,21 @@ async def enqueue_link(bot: Client, message: Message, link: str) -> None:
 
 
 @Client.on_callback_query(filters.regex(r"^job:fetch:(\d+)$"))
-async def fetch_job(_: Client, query: CallbackQuery):
+async def fetch_job(bot: Client, query: CallbackQuery):
     job_id = int(query.data.split(":")[-1])
     job = queue.get(job_id)
     if not job or job.get("status") != "ready":
         await query.answer("العملية ليست جاهزة للجلب")
         return
-    queue.update(job_id, status="queued", phase="في قائمة الانتظار للجلب")
-    await query.answer("أضيفت إلى قائمة الجلب")
-    await query.message.edit_text(f"📥 العملية #{job_id} في قائمة الانتظار للجلب...")
+    queue.update(job_id, status="queued", phase="في قائمة الانتظار للجلب", progress=0, error="")
+    await query.answer("بدأت عملية الجلب")
+    await query.message.edit_text(
+        f"📥 العملية #{job_id} في قائمة الانتظار للجلب...\n"
+        "سيتم تحديث هذه الرسالة عند بدء النقل."
+    )
+    # Start/reuse the worker from the button itself. This also covers a
+    # dashboard-started bot where the worker was not created during boot.
+    await queue.start(lambda current: process_job(bot, current))
 
 
 @Client.on_callback_query(filters.regex("^download_video$"))
