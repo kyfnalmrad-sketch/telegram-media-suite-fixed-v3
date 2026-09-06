@@ -185,18 +185,20 @@ def dashboard():
         <p>رقم الهاتف من Render: <span id='phone'>{env_first('TELEGRAM_PHONE_NUMBER', 'PHONE') or 'غير مضبوط'}</span></p>
         <p>التسلسل: <b>بدء جلسة ← الكود ← كلمة مرور التحقق (إن وجدت) ← ترحيل الجلسة ← تشغيل البوت</b></p>
         <button onclick='start()'>بدء جلسة</button><br>
-        <input id='value' type='password' autocomplete='one-time-code' placeholder='الكود أو كلمة مرور التحقق' style='width:330px'>
-        <button onclick='submitValue()'>إرسال</button><br>
+        <div id='codeBox' hidden><input id='code' inputmode='numeric' autocomplete='one-time-code' placeholder='كود Telegram الرقمي' style='width:330px'><button onclick='submitCode()'>تحقق من الكود</button></div>
+        <div id='passwordBox' hidden><input id='password' type='password' autocomplete='current-password' placeholder='كلمة مرور التحقق بخطوتين' style='width:330px'><button onclick='submitPassword()'>تحقق من كلمة المرور</button></div>
+        <p>إذا ظهرت حالة <b>code</b> أدخل الكود الرقمي الذي أرسله Telegram. إذا ظهرت حالة <b>password</b> أدخل كلمة مرور التحقق بخطوتين، وليس الكود الرقمي.</p>
         <button onclick='transfer()'>ترحيل الجلسة إلى Render</button>
         <button onclick='startBot()'>تشغيل البوت</button>
         <p id='result'></p>
         <script>
         async function call(url, body={{}}){{let r=await fetch(url,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(body)}});let x=await r.json();document.getElementById('result').textContent=x.error||x.message||JSON.stringify(x);refresh();}}
         async function start(){{await call('/api/session/start',{{}})}}
-        async function submitValue(){{let v=document.getElementById('value').value;let s=document.getElementById('state').textContent;await call(s==='password'?'/api/session/password':'/api/session/code',{{value:v}})}}
+        async function submitCode(){{await call('/api/session/code',{{value:document.getElementById('code').value}})}}
+        async function submitPassword(){{await call('/api/session/password',{{value:document.getElementById('password').value}})}}
         async function transfer(){{await call('/api/session/transfer',{{}})}}
         async function startBot(){{await call('/api/bot/start',{{}})}}
-        async function refresh(){{let r=await fetch('/api/session/status');if(!r.ok)return;let x=await r.json();document.getElementById('state').textContent=x.state;}}
+        async function refresh(){{let r=await fetch('/api/session/status');if(!r.ok)return;let x=await r.json();document.getElementById('state').textContent=x.state;document.getElementById('codeBox').hidden=x.state!=='code';document.getElementById('passwordBox').hidden=x.state!=='password';if(x.error)document.getElementById('result').textContent=x.error;}}
         setInterval(refresh,3000); refresh();
         </script>"""
     )
