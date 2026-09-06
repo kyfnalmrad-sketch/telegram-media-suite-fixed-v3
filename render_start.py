@@ -13,6 +13,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+# Pyrogram 2.1.x imports its sync wrapper during module import and expects a
+# current event loop. Python 3.14 no longer creates one automatically.
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 from flask import Flask, jsonify, make_response, request
 from pyrogram import Client
 from pyrogram.errors import SessionPasswordNeeded

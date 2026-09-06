@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Pyrogram 2.1.x imports its sync wrapper during module import and expects a
+# current event loop. Python 3.14 no longer creates one automatically.
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 from pyrogram import Client
 
 load_dotenv()
