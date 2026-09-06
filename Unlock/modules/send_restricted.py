@@ -172,6 +172,7 @@ def operation_buttons(job: dict) -> list[list[InlineKeyboardButton]]:
     elif status in {"failed", "cancelled"}:
         rows.append([InlineKeyboardButton(f"🔁 إعادة #{job_id}", callback_data=f"job:retry:{job_id}")])
     rows.append([InlineKeyboardButton(f"🔎 تفاصيل #{job_id}", callback_data=f"job:view:{job_id}")])
+    rows.append([InlineKeyboardButton("🏠 الرئيسية", callback_data="queue:refresh")])
     return rows
 
 

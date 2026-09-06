@@ -29,7 +29,10 @@ async def edit_callback_control(query, text: str, reply_markup: InlineKeyboardMa
         CONTROL_MESSAGES[query.message.chat.id] = query.message.id
         return query.message
     except Exception:
-        return await update_control(query._client, query.message.chat.id, text, reply_markup)
+        bot = getattr(query, "_client", None) or getattr(query.message, "_client", None)
+        if bot is None:
+            raise
+        return await update_control(bot, query.message.chat.id, text, reply_markup)
 
 
 __all__ = ["CONTROL_MESSAGES", "update_control", "edit_callback_control"]
