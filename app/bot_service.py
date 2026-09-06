@@ -48,21 +48,34 @@ def parse_message_link(link: str) -> Tuple[Optional[Union[str, int]], Optional[i
 
 async def ensure_peer_resolved(client: Client, chat_ref: Union[str, int]):
     """فحص كامل ومباشر لمحادثات الحساب لتحديث كاش القنوات."""
+    normalized_ref = int(chat_ref) if isinstance(chat_ref, str) and chat_ref.lstrip("-").isdigit() else chat_ref
     try:
         # محاولة الوصول المباشر
-        return await client.get_chat(chat_ref)
+        chat = await client.get_chat(normalized_ref)
+        await client.resolve_peer(chat.id)
+        return chat
     except Exception:
         # فحص شامل لكافة المحادثات والقنوات التي ينضم لها الحساب
         async for dialog in client.get_dialogs():
-            if dialog.chat.id == chat_ref or (
+            if dialog.chat.id == normalized_ref or (
                 dialog.chat.username
-                and dialog.chat.username.lower() == str(chat_ref).lower()
+                and dialog.chat.username.lower().lstrip("@") == str(chat_ref).lower().lstrip("@")
             ):
+                # get_dialogs normally fills Pyrogram's peer database; resolve it
+                # explicitly as well because numeric /c links depend on access_hash.
+                try:
+                    await client.resolve_peer(dialog.chat.id)
+                except Exception as exc:
+                    raise ValueError(
+                        "تعذر تحديث مرجع القناة. تأكد من أن الحساب الشخصي عضو في القناة."
+                    ) from exc
                 return dialog.chat
 
         # محاولة أخيرة بعد تحديث بيانات الجلسة بالكامل
         try:
-            return await client.get_chat(chat_ref)
+            chat = await client.get_chat(normalized_ref)
+            await client.resolve_peer(chat.id)
+            return chat
         except Exception:
             raise ValueError(
                 "الحساب الشخصي ليس عضواً في هذه القناة، أو أن القناة غير متاحة حالياً."
