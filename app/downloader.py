@@ -54,6 +54,34 @@ URL_START_RE = re.compile(
     r")"
 )
 
+MEDIA_FIELDS = (
+    ("photo", "photo"),
+    ("video", "video"),
+    ("audio", "audio"),
+    ("voice", "voice"),
+    ("video_note", "video_note"),
+    ("animation", "animation"),
+    ("document", "document"),
+)
+
+
+def inspect_message_media(message: Any) -> dict[str, Any] | None:
+    """Return modern-style media metadata without downloading the message."""
+    if not message or getattr(message, "empty", False):
+        return None
+    for attribute, media_type in MEDIA_FIELDS:
+        media = getattr(message, attribute, None)
+        if media is None:
+            continue
+        return {
+            "type": media_type,
+            "size": int(getattr(media, "file_size", 0) or 0),
+            "caption": (getattr(message, "caption", None) or getattr(message, "text", None) or "").strip() or None,
+            "message_id": getattr(message, "id", None),
+            "chat_id": getattr(getattr(message, "chat", None), "id", None),
+        }
+    return None
+
 
 class TelegramSession:
     """Own a Pyrogram user client on one event-loop thread."""

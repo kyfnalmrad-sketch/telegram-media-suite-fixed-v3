@@ -29,7 +29,7 @@ from pyrogram.types import (
 )
 
 from automation import DualAutomationProcessor
-from downloader import TelegramSession, extract_telegram_links, parse_chat_link, parse_message_link, safe_name
+from downloader import TelegramSession, extract_telegram_links, inspect_message_media, parse_chat_link, parse_message_link, safe_name
 
 
 class TelegramBotService:
@@ -1304,6 +1304,8 @@ class TelegramBotService:
             if not session:
                 raise RuntimeError("جلسة الحساب غير متاحة")
             item = await asyncio.wrap_future(session.fetch_message(chat_ref, message_id))
+            if not inspect_message_media(item):
+                raise ValueError("الرسالة لا تحتوي على فيديو أو صوت أو صورة أو مستند قابل للتنزيل")
             await self._send_downloaded(message, item, worker_id)
         except Exception as exc:
             self.log(f"فشل طلب البوت: {type(exc).__name__}")
@@ -1312,7 +1314,8 @@ class TelegramBotService:
         return True
 
     async def _send_downloaded(self, message: Any, item: Any, worker_id: int = 1) -> None:
-        if not item or item.empty or not item.media:
+        media_info = inspect_message_media(item)
+        if not media_info:
             await message.reply_text("الرسالة لا تحتوي على ملف وسائط.", reply_markup=self._reply_keyboard())
             return
         session = self.session_getter()
@@ -1447,11 +1450,8 @@ class TelegramBotService:
 
     @staticmethod
     def _message_size(message: Any) -> int:
-        for key in ("document", "video", "audio", "voice", "video_note", "photo", "animation"):
-            media = getattr(message, key, None)
-            if media is not None:
-                return int(getattr(media, "file_size", 0) or 0)
-        return 0
+        details = inspect_message_media(message)
+        return int(details["size"]) if details else 0
 
     def stop(self) -> None:
         timer = self._runtime_timer
