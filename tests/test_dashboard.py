@@ -12,7 +12,12 @@ def test_health_is_public_but_does_not_expose_private_queue(monkeypatch):
     response = client.get("/health")
 
     assert response.status_code == 200
-    assert response.get_json() == {"ok": True, "service": "running"}
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["service"] == "telegram-media-suite"
+    assert "version" in payload
+    assert "bot" in payload
+    assert "exit_code" in payload
 
 
 def test_dashboard_api_remains_open_without_password(monkeypatch):

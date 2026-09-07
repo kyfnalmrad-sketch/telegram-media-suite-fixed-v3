@@ -34,6 +34,7 @@ SERVICE_LOG = DATA_DIR / "service_events.jsonl"
 SERVICE_LOCK = DATA_DIR / "service_events.lock"
 STATE_LOCK = DATA_DIR / "jobs.lock"
 BOT_OUTPUT_LOG = DATA_DIR / "bot_process.log"
+BUILD_VERSION = os.getenv("TMD_BUILD_VERSION", "current-main-2e870a1")
 _SESSION_REVOKED = False
 app = Flask(__name__)
 _bot_process: subprocess.Popen | None = None
@@ -328,9 +329,18 @@ def service_snapshot() -> dict:
 
 @app.get("/health")
 def health():
-    # Render only needs a small liveness response. Queue contents and service
-    # events are private and are exposed through the authenticated status API.
-    return jsonify({"ok": True, "service": "running"})
+    # Keep this endpoint safe for Render's health check while exposing enough
+    # information to prove which build is actually deployed.
+    bot = bot_process_snapshot()
+    session = setup.snapshot()
+    return jsonify({
+        "ok": True,
+        "service": "telegram-media-suite",
+        "version": BUILD_VERSION,
+        "bot": "running" if bot["running"] else "error",
+        "session": session["state"],
+        "exit_code": bot["exit_code"],
+    })
 
 
 @app.get("/")
