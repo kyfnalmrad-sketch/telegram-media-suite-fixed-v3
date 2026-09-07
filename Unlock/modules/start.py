@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, ReplyKeyboardRemove
 
 from .ui_state import CONTROL_MESSAGES, update_control
 
@@ -16,6 +16,10 @@ def menu() -> InlineKeyboardMarkup:
 
 @Client.on_message(filters.private & filters.command("start"))
 async def start(bot: Client, message: Message):
+    # Older releases displayed a persistent reply keyboard. Remove it first;
+    # the current UI intentionally uses only inline buttons in the control
+    # message, so both layouts do not remain visible at the same time.
+    await bot.send_message(message.chat.id, "تم تحديث قائمة البوت.", reply_markup=ReplyKeyboardRemove())
     await update_control(
         bot,
         message.chat.id,
