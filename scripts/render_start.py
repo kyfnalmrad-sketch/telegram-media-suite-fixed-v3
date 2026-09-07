@@ -23,7 +23,12 @@ def bootstrap() -> None:
     force_restore = os.environ.get("TMD_SESSION_B64_FORCE", "").strip().lower() == "true"
     session_file = SESSION_DIR / "tmd_user.session"
     if encoded_session and (force_restore or not session_file.exists()):
-        session_bytes = base64.b64decode(encoded_session, validate=True)
+        try:
+            session_bytes = base64.b64decode(encoded_session, validate=True)
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("TMD_SESSION_B64 غير صالح") from exc
+        if not session_bytes:
+            raise RuntimeError("TMD_SESSION_B64 فارغ")
         temporary_session = session_file.with_suffix(".session.tmp")
         temporary_session.write_bytes(session_bytes)
         temporary_session.chmod(0o600)
@@ -42,9 +47,15 @@ def bootstrap() -> None:
         "allowed_user_ids": os.environ.get("ALLOWED_USER_IDS", ""),
         "auto_start": True,
     }
-    if not SETTINGS_FILE.exists():
-        SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
-        SETTINGS_FILE.chmod(0o600)
+    try:
+        existing = json.loads(SETTINGS_FILE.read_text(encoding="utf-8")) if SETTINGS_FILE.exists() else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    existing.update({key: value for key, value in settings.items() if value or key in {"storage_path", "session_path", "auto_start"}})
+    SETTINGS_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    SETTINGS_FILE.chmod(0o600)
 
 
 def main() -> None:
