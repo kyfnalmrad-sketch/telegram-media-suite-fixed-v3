@@ -22,6 +22,7 @@ HOST = os.environ.get("TMD_HOST", "0.0.0.0" if IS_RENDER else "127.0.0.1")
 PORT = int(os.environ.get("PORT", os.environ.get("TMD_PORT", "8765")))
 OPEN_BROWSER = os.environ.get("TMD_OPEN_BROWSER", "false" if IS_RENDER else "true").lower() in {"1", "true", "yes"}
 DASHBOARD_TOKEN = os.environ.get("TMD_DASHBOARD_TOKEN", "").strip()
+BUILD_VERSION = os.environ.get("TMD_BUILD_VERSION", "hybrid-stable-11a9758")
 _owner_raw = os.environ.get("TMD_SESSION_SETUP_OWNER_ID", "").strip()
 try:
     SESSION_SETUP_OWNER_ID = int(_owner_raw) if _owner_raw else None
@@ -205,12 +206,21 @@ def api_state():
 @app.get("/health")
 def health():
     session_state = manager.session_snapshot().get("state", "not_started")
+    data_dir = Path(os.environ.get("TMD_SUITE_DATA", str(Path.home() / ".tmd-data")))
+    configured_session_path = str(load_settings().get("session_path", "")).strip()
+    session_file = (
+        Path(configured_session_path) / "tmd_user.session"
+        if configured_session_path
+        else data_dir / "sessions" / "tmd_user.session"
+    )
     return jsonify({
         "ok": True,
         "service": "telegram-media-suite",
-        "version": "3.2.2",
+        "version": BUILD_VERSION,
         "session": session_state,
         "bot": bot.status,
+        "session_file": "ready" if session_file.exists() else "missing",
+        "storage": "writable" if os.access(str(data_dir), os.W_OK) else "unavailable",
     })
 
 

@@ -12,6 +12,8 @@ services:
         value: 3.12.4
       - key: TMD_SUITE_DATA
         value: /opt/render/project/src/.tmd-data
+      - key: TMD_BUILD_VERSION
+        value: hybrid-stable-11a9758
       - key: TMD_HOST
         value: 0.0.0.0
       - key: TMD_OPEN_BROWSER
