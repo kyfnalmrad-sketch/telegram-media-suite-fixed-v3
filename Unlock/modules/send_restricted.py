@@ -75,20 +75,29 @@ async def process_job(bot: Client, job: dict) -> None:
                 raise RuntimeError("تم إلغاء العملية")
             upload_reporter.update_sync("📤 جاري إرسال الوسائط إلى البوت...", current, total)
 
-        # Use an open handle so Pyrogram cannot mistake an unavailable path
-        # for a Telegram file id. The handle also keeps the file available for
-        # the complete upload, including large files on Render's /tmp volume.
-        with upload_path.open("rb") as media_file:
-            if result["type"] == "video":
-                await bot.send_video(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, supports_streaming=True, progress=upload_progress)
-            elif result["type"] == "audio":
-                await bot.send_audio(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
-            elif result["type"] == "photo":
-                await bot.send_photo(job["chat_id"], media_file, caption=caption)
-            elif result["type"] == "voice":
-                await bot.send_voice(job["chat_id"], media_file, caption=caption, progress=upload_progress)
-            else:
-                await bot.send_document(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
+        # Re-open the same local file for a bounded retry. A broken upload
+        # connection must not force a second Telegram download.
+        for attempt in range(1, 4):
+            try:
+                with upload_path.open("rb") as media_file:
+                    if result["type"] == "video":
+                        await bot.send_video(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, supports_streaming=True, progress=upload_progress)
+                    elif result["type"] == "audio":
+                        await bot.send_audio(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
+                    elif result["type"] == "photo":
+                        await bot.send_photo(job["chat_id"], media_file, caption=caption)
+                    elif result["type"] == "voice":
+                        await bot.send_voice(job["chat_id"], media_file, caption=caption, progress=upload_progress)
+                    else:
+                        await bot.send_document(job["chat_id"], media_file, caption=caption, file_name=upload_path.name, progress=upload_progress)
+                break
+            except (ConnectionError, TimeoutError, OSError) as exc:
+                if attempt >= 3:
+                    raise
+                queue.update(job["id"], phase=f"انقطع الرفع — إعادة المحاولة {attempt}/2", event=f"إعادة رفع بعد خطأ اتصال: {type(exc).__name__}")
+                record_service_event("upload_retry", f"job={job['id']} attempt={attempt + 1}/3 error={type(exc).__name__}", job_id=job["id"])
+                await upload_reporter.finish(f"⚠️ انقطع الرفع، إعادة المحاولة {attempt}/2...", phase=f"إعادة محاولة الرفع {attempt}/2")
+                await asyncio.sleep(2 * attempt)
         await upload_reporter.finish(
             f"✅ اكتملت العملية #{job['id']}\nالوسائط جاهزة للمشاهدة أو الحفظ من رسالة Telegram.",
             status="completed",

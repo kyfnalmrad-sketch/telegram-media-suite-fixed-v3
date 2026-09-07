@@ -13,7 +13,7 @@ def explain_error(exc: Exception, phase: str = "المعالجة") -> tuple[str,
     if isinstance(exc, (PeerIdInvalid, MessageIdInvalid)):
         return "MESSAGE_ACCESS", "تعذر الوصول إلى القناة أو رقم الرسالة.", "تأكد من الرابط وأن الحساب المرتبط يستطيع رؤية القناة والرسالة."
     if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
-        return "NETWORK_ERROR", "انقطع الاتصال أثناء العملية.", "أعد المحاولة؛ سيتم استخدام مسار جلب بديل."
+        return "NETWORK_ERROR", "انقطع الاتصال أثناء العملية.", "سيُعاد الرفع من الملف الموجود دون إعادة تنزيله؛ أعد المحاولة إذا استمر الانقطاع."
     if "FILE_REFERENCE" in name.upper() or "file reference" in raw.lower():
         return "FILE_REFERENCE_EXPIRED", "مرجع الملف القديم انتهت صلاحيته.", "أعد جلب الرسالة بمرجع حديث ثم أعد التنزيل."
     if phase == "الجلب":
