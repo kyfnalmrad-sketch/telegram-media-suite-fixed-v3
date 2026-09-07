@@ -412,6 +412,7 @@ def mutate_job(job_id: int, action: str) -> dict:
             os.replace(temporary, path)
         finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    record_service_event("dashboard_job_action", f"job={job_id} action={action} status={status}")
     return job
 
 

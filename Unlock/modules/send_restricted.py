@@ -158,11 +158,18 @@ async def fetch_job(bot: Client, query: CallbackQuery):
         return
     queue.update(job_id, status="queued", phase="في قائمة الانتظار للجلب", progress=0, error="")
     await query.answer("بدأت عملية الجلب")
-    await query.message.edit_text(
+    # Keep the main control menu responsive and create a dedicated message for
+    # this transfer. Progress edits must not overwrite the menu.
+    progress_message = await bot.send_message(
+        query.message.chat.id,
         f"📥 العملية #{job_id} في قائمة الانتظار للجلب...\n"
-        "سيتم تحديث هذه الرسالة عند بدء النقل.",
-        reply_markup=menu(),
+        "ستظهر هنا مراحل التحليل والجلب والإرسال.",
     )
+    queue.update(job_id, status_message_id=progress_message.id, event="تم إنشاء رسالة تقدم مستقلة")
+    try:
+        await query.message.edit_text("لوحة التحكم جاهزة لعملية أخرى.", reply_markup=menu())
+    except Exception:
+        logging.exception("Failed to refresh control menu after starting job")
     # Start/reuse the worker from the button itself. This also covers a
     # dashboard-started bot where the worker was not created during boot.
     await queue.start(lambda current: process_job(bot, current))

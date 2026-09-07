@@ -5,6 +5,7 @@ import logging
 import time
 
 from pyrogram import idle
+from pyrogram.types import BotCommand
 
 from . import require_clients
 from .modules.job_queue import queue
@@ -28,6 +29,15 @@ async def main() -> None:
         Unlock.ubot = ubot
         saver_module.ubot = ubot
         await rbot.start()
+        try:
+            await rbot.set_bot_commands([
+                BotCommand("start", "فتح لوحة التحكم"),
+                BotCommand("save", "تحليل رابط Telegram"),
+                BotCommand("help", "عرض المساعدة"),
+            ])
+        except Exception as exc:
+            logging.exception("Failed to refresh Telegram bot commands")
+            record_service_event("bot_commands_failed", f"{type(exc).__name__}: {exc}")
         await ubot.start()
         await queue.start(lambda job: process_job(rbot, job))
         logging.info("Bot and user session are ready")
