@@ -16,7 +16,7 @@ from flask import Flask, jsonify, render_template_string, request, send_file
 
 from bot_service import TelegramBotService
 from config_store import APP_DIR, load_settings, save_settings, secret_state
-from downloader import DownloadManager
+from downloader import DownloadManager, extract_telegram_links
 
 IS_RENDER = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
 HOST = os.environ.get("TMD_HOST", "0.0.0.0" if IS_RENDER else "127.0.0.1")
@@ -127,7 +127,7 @@ PAGE = r"""
 main{position:relative;z-index:1;max-width:1180px;margin:0 auto;margin-right:230px;padding:28px}.side-menu{position:fixed;z-index:2;right:18px;top:18px;bottom:18px;width:190px;padding:18px 12px;background:#0b1425dd;border:1px solid #334a6c;border-radius:20px;backdrop-filter:blur(16px);box-shadow:0 18px 60px #02061788}.side-menu h2{font-size:18px;margin:4px 8px 18px}.side-menu .brand-mark{font-size:30px;color:#8bd8ff;margin:0 8px 4px}.side-menu a{display:block;color:#dbeafe;text-decoration:none;padding:11px 12px;border-radius:10px;margin:5px 0;background:#17243a99;transition:.2s}.side-menu a:hover,.side-menu a:focus{background:#2563eb;color:#fff;transform:translateX(-3px)}.side-menu small{display:block;color:#91a4bd;margin:18px 8px 6px}
 .hero{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:20px}
 h1{margin:0;font-size:30px}.muted{color:#9fb0c7}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.card{background:#172033;border:1px solid #2c3a52;border-radius:16px;padding:18px;box-shadow:0 12px 40px #02061744}.wide{grid-column:1/-1}
-label{display:block;margin:12px 0 6px;color:#b9c9df}input,button,select{font:inherit;border-radius:10px;border:1px solid #3a4b68;padding:10px;background:#0b1220;color:#eef5ff;width:100%}button{background:#2563eb;border:0;cursor:pointer;font-weight:700}button.secondary{background:#334155}button.danger{background:#b91c1c}.row{display:flex;gap:10px;align-items:end}.row>*{flex:1}.status{padding:10px;border-radius:10px;background:#0b1220;margin:8px 0}.ok{color:#86efac}.warn{color:#fde68a}.err{color:#fca5a5}.progress{height:15px;background:#0b1220;border-radius:20px;overflow:hidden;margin-top:8px}.bar{height:100%;background:linear-gradient(90deg,#38bdf8,#2563eb);width:0;transition:width .2s}.job{border-top:1px solid #334155;padding:12px 0}.job:first-child{border-top:0}.log{font-family:Consolas,monospace;white-space:pre-wrap;background:#070b14;padding:12px;border-radius:10px;max-height:260px;overflow:auto;direction:ltr;text-align:left}.pill{display:inline-block;padding:4px 8px;border-radius:99px;background:#334155;margin:2px;font-size:12px}
+label{display:block;margin:12px 0 6px;color:#b9c9df}input,textarea,button,select{font:inherit;border-radius:10px;border:1px solid #3a4b68;padding:10px;background:#0b1220;color:#eef5ff;width:100%}button{background:#2563eb;border:0;cursor:pointer;font-weight:700}button.secondary{background:#334155}button.danger{background:#b91c1c}.row{display:flex;gap:10px;align-items:end}.row>*{flex:1}.status{padding:10px;border-radius:10px;background:#0b1220;margin:8px 0}.ok{color:#86efac}.warn{color:#fde68a}.err{color:#fca5a5}.progress{height:15px;background:#0b1220;border-radius:20px;overflow:hidden;margin-top:8px;position:relative}.bar{height:100%;background:linear-gradient(90deg,#38bdf8,#2563eb,#60a5fa);background-size:200% 100%;width:0;transition:width .35s ease;animation:bar-flow 1.4s linear infinite}.bar.done{background:linear-gradient(90deg,#22c55e,#86efac);animation:none}@keyframes bar-flow{from{background-position:0 0}to{background-position:200% 0}}.job{border-top:1px solid #334155;padding:14px 0;position:relative}.job:first-child{border-top:0}.job-head{display:flex;justify-content:space-between;gap:12px;align-items:center}.job-status{padding:4px 9px;border-radius:999px;background:#24344f;color:#bfdbfe;font-size:12px}.job-status.completed{background:#14532d;color:#bbf7d0}.job-status.failed{background:#7f1d1d;color:#fecaca}.job-meta{display:flex;justify-content:space-between;gap:10px;margin-top:7px;font-size:12px}.job-layer{position:absolute;inset:8px 0 auto 0;height:2px;background:linear-gradient(90deg,transparent,#38bdf8,transparent);opacity:.55;pointer-events:none;animation:layer-sweep 2.2s ease-in-out infinite}@keyframes layer-sweep{0%,100%{transform:translateX(-45%);opacity:.15}50%{transform:translateX(45%);opacity:.8}}.download-summary{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.download-summary .pill{margin:0}.log{font-family:Consolas,monospace;white-space:pre-wrap;background:#070b14;padding:12px;border-radius:10px;max-height:260px;overflow:auto;direction:ltr;text-align:left}.pill{display:inline-block;padding:4px 8px;border-radius:99px;background:#334155;margin:2px;font-size:12px}
 @media(max-width:820px){.side-menu{position:relative;right:auto;top:auto;bottom:auto;width:auto;margin:12px;display:flex;gap:6px;overflow:auto}.side-menu h2,.side-menu small,.side-menu .brand-mark{display:none}.side-menu a{white-space:nowrap}.grid{grid-template-columns:1fr}main{margin-right:0;padding:16px}.wide{grid-column:auto}.hero{display:block}}
 </style></head>
 <body><aside class="side-menu"><div class="brand-mark">◈</div><h2>القائمة الرئيسية</h2><a href="#account">إعداد الحساب</a><a href="#auth">تسجيل الدخول</a><a href="#download">تنزيل رابط</a><a href="#bot">البوت</a><a href="#jobs">المهام</a><a href="#logs">السجل</a><small>تنقل سريع بين الأقسام</small></aside><main>
@@ -153,9 +153,9 @@ label{display:block;margin:12px 0 6px;color:#b9c9df}input,button,select{font:inh
 <p class="muted">لا تُحفظ كلمة المرور أو رمز التحقق في الإعدادات.</p></section>
 
 <section id="download" class="card"><h2>تنزيل رابط</h2>
-<label>رابط رسالة Telegram</label><input id="link" placeholder="https://t.me/channel/123 أو رابط خاص">
+<label>روابط رسائل Telegram</label><textarea id="link" rows="4" placeholder="ضع رابطًا واحدًا أو عدة روابط، كل رابط في سطر مستقل"></textarea>
 <label>مسار التخزين</label><input id="storage_path" placeholder="سيظهر بعد حفظ الإعدادات">
-<button onclick="downloadLink()">تنزيل وتنظيم الملف</button><div id="downloadStatus" class="status">لم تبدأ مهمة.</div></section>
+<button onclick="downloadLink()">تنزيل وتنظيم الملفات</button><div id="downloadStatus" class="status">لم تبدأ مهمة.</div></section>
 
 <section id="bot" class="card"><h2>البوت</h2>
 <label>User IDs المسموح لهم، مفصولة بفواصل</label><input id="allowed_user_ids" placeholder="123456789,987654321">
@@ -174,7 +174,7 @@ async function api(url, options={}){const r=await fetch(url,{headers:{'Content-T
 function setValue(id,v){const e=document.getElementById(id);if(v!==undefined&&v!==null)e.value=v}
 function render(s){state=s;const ss=s.session||{};const sessionLabel=ss.state==='ready'&&ss.origin==='saved_session'?'جاهزة — جلسة محفوظة محمّلة تلقائيًا':ss.state==='ready'&&ss.origin==='new_login'?'جاهزة — تم تسجيلها الآن':ss.state;document.getElementById('sessionStatus').textContent='حالة الجلسة: '+sessionLabel+(ss.error?' — '+ss.error:'');document.getElementById('botStatus').textContent='حالة البوت: '+(s.bot||{}).status;
 setValue('chat_id',s.settings.chat_id);setValue('storage_path',s.settings.storage_path);setValue('allowed_user_ids',s.settings.allowed_user_ids);document.getElementById('auto_start').checked=!!s.settings.auto_start;
-const jobs=Object.values(s.jobs||{});document.getElementById('jobsList').innerHTML=jobs.length?jobs.map(j=>{const p=j.total?Math.floor(j.downloaded*100/j.total):0;return `<div class="job"><b>${j.status}</b> — ${j.file||j.link}<div class="progress"><div class="bar" style="width:${p}%"></div></div><span class="muted">${j.downloaded||0} / ${j.total||0} bytes</span>${j.error?`<div class="err">${j.error}</div>`:''}</div>`}).join(''):'لا توجد مهام.';
+const jobs=Object.values(s.jobs||{});const counts=jobs.reduce((a,j)=>(a[j.status]=(a[j.status]||0)+1,a),{});document.getElementById('jobsList').innerHTML=jobs.length?`<div class="download-summary"><span class="pill">الكل: ${jobs.length}</span><span class="pill">قيد العمل: ${(counts.downloading||0)+(counts.queued||0)}</span><span class="pill">مكتمل: ${counts.completed||0}</span><span class="pill">فشل: ${counts.failed||0}</span></div>`+jobs.map(j=>{const p=j.total?Math.min(100,Math.floor(j.downloaded*100/j.total)):j.status==='completed'?100:0;const label={queued:'في الانتظار',downloading:'جارٍ التنزيل',completed:'اكتمل',failed:'فشل'}[j.status]||j.status;return `<div class="job"><div class="job-layer"></div><div class="job-head"><b>${j.file||j.link}</b><span class="job-status ${j.status}">${label}</span></div><div class="progress"><div class="bar ${j.status==='completed'?'done':''}" style="width:${p}%"></div></div><div class="job-meta"><span class="muted">${p}% — ${j.downloaded||0} / ${j.total||0} bytes</span><span class="muted">${j.id.slice(0,8)}</span></div>${j.error?`<div class="err">${j.error}</div>`:''}</div>`}).join(''):'لا توجد مهام.';
 document.getElementById('logsBox').textContent=(s.logs||[]).join('\n')||'لا يوجد سجل بعد.';
 const prompt=ss.state==='phone'?'أدخل رقم الهاتف ثم أرسل':ss.state==='code'?'أدخل رمز Telegram ثم أرسل':ss.state==='password'?'أدخل كلمة مرور التحقق بخطوتين ثم أرسل':ss.state==='ready'&&ss.origin==='saved_session'?'الجلسة المحفوظة جاهزة؛ لم يُطلب رقم أو رمز جديد.':'لا توجد مطالبة حاليًا.';document.getElementById('authPrompt').textContent=prompt;document.getElementById('topStatus').textContent=ss.state==='ready'?(ss.origin==='saved_session'?'جلسة محفوظة جاهزة':'الجلسة جاهزة'):(s.bot||{}).status==='running'?'البوت يعمل':'جاهز'}
 async function refresh(){try{render(await api('/api/state'))}catch(e){document.getElementById('topStatus').textContent=e.message}}
@@ -185,7 +185,7 @@ async function resetSession(){if(!confirm('سيؤدي هذا إلى حذف مل�
 async function requestSavedPhone(){try{await api('/api/session/request-phone',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function resendCode(){try{await api('/api/session/resend-code',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind,value:authValue.value})});authValue.value='';refresh()}catch(e){alert(e.message)}}
-async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء المهمة: '+d.job_id;refresh()}catch(e){alert(e.message)}}
+async function downloadLink(){try{const d=await api('/api/download',{method:'POST',body:JSON.stringify({link:link.value})});document.getElementById('downloadStatus').textContent='تم إنشاء '+d.job_ids.length+' مهمة تنزيل متوازية.';link.value='';refresh()}catch(e){alert(e.message)}}
 async function startBot(){try{await api('/api/bot/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function stopBot(){try{await api('/api/bot/stop',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 setInterval(refresh,1500);refresh();
@@ -291,10 +291,25 @@ def api_auth():
 def api_download():
     payload = request.get_json(silent=True) or {}
     current = load_settings()
-    ok, result = manager.submit_download(str(payload.get("link", "")), str(current["storage_path"]))
-    if not ok:
-        return jsonify({"error": result}), 400
-    return jsonify({"ok": True, "job_id": result})
+    raw_links = payload.get("links", payload.get("link", ""))
+    if isinstance(raw_links, list):
+        text = "\n".join(str(item) for item in raw_links)
+    else:
+        text = str(raw_links)
+    links = extract_telegram_links(text, limit=20)
+    if not links:
+        return jsonify({"error": "أدخل رابط Telegram واحدًا على الأقل، كل رابط في سطر مستقل"}), 400
+    job_ids: list[str] = []
+    errors: list[str] = []
+    for link in links:
+        ok, result = manager.submit_download(link, str(current["storage_path"]))
+        if ok:
+            job_ids.append(result)
+        else:
+            errors.append(f"{link}: {result}")
+    if not job_ids:
+        return jsonify({"error": errors[0] if errors else "تعذر إنشاء مهام التنزيل"}), 400
+    return jsonify({"ok": True, "job_ids": job_ids, "errors": errors})
 
 
 @app.post("/api/bot/start")
