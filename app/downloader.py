@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import re
 import threading
@@ -377,6 +378,14 @@ class TelegramSession:
         if self.loop and self.loop.is_running():
             self.loop.call_soon_threadsafe(self.loop.stop)
 
+    def stop(self) -> None:
+        """Stop this session without deleting its files."""
+        self._stop()
+        thread = self.thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=5.0)
+        self._set_state("stopped", "")
+
 
 def _channel_ref(value: str) -> str | int:
     value = value.strip()
@@ -543,6 +552,39 @@ class DownloadManager:
 
     def session_snapshot(self) -> dict[str, str]:
         return self.session.snapshot() if self.session else {"state": "not_started", "error": ""}
+
+    def session_file(self) -> Path | None:
+        if not self.session:
+            return None
+        return Path(self.session.session_path).expanduser() / "tmd_user.session"
+
+    def export_session(self) -> tuple[bool, str]:
+        """Return a base64 export without changing or deleting the live session."""
+        path = self.session_file()
+        if not path or not path.exists():
+            return False, "لا توجد جلسة محفوظة للتصدير"
+        return True, base64.b64encode(path.read_bytes()).decode("ascii")
+
+    def reset_session(self) -> tuple[bool, str]:
+        """Explicitly remove the local session and prepare a fresh login."""
+        path = self.session_file()
+        if not path:
+            return False, "لم تبدأ جلسة Telegram بعد"
+        if self.session:
+            self.session.stop()
+        session_dir = path.parent
+        removed = False
+        for candidate in (path, path.with_name(path.name + "-journal"), path.with_name(path.name + "-shm")):
+            try:
+                candidate.unlink()
+                removed = True
+            except FileNotFoundError:
+                pass
+        self.session = TelegramSession(
+            str(self.session.api_id), self.session.api_hash, str(session_dir), self.log
+        )
+        self.session.start()
+        return True, "تمت إزالة الجلسة القديمة وبدأت جلسة جديدة"
 
     def resend_auth_code(self) -> str:
         if not self.session:

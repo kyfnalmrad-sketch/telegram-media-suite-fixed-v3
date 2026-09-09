@@ -121,7 +121,10 @@ class TelegramBotService:
         except Exception as exc:
             self.status = "error"
             self.error = type(exc).__name__
-            self.log(f"فشل تشغيل البوت: {type(exc).__name__}")
+            if type(exc).__name__ == "AccessTokenExpired":
+                self.log("فشل تشغيل البوت: AccessTokenExpired — Bot Token منتهي أو ملغى؛ حدّث BOT_TOKEN فقط. جلسة الحساب الشخصي محفوظة ولم تُحذف.")
+            else:
+                self.log(f"فشل تشغيل البوت: {type(exc).__name__}")
         finally:
             if self.client and self.client.is_connected:
                 stopped = self.client.stop()

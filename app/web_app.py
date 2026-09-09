@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import io
 import json
 import os
 import threading
@@ -141,6 +142,8 @@ label{display:block;margin:12px 0 6px;color:#b9c9df}input,button,select{font:inh
 <label>رقم الهاتف</label><input id="phone" placeholder="للحساب الشخصي">
 <label>معرّف الدردشة الافتراضي</label><input id="chat_id" placeholder="مثال: -1001234567890">
 <div class="row"><button onclick="saveSettings()">حفظ الإعدادات</button><button class="secondary" onclick="startSession()">بدء جلسة Telegram</button></div>
+<div class="row"><button class="secondary" onclick="exportSession()">ترحيل الجلسة إلى Render</button><button class="danger" onclick="resetSession()">إزالة جلسة Render وبدء جديدة</button></div>
+<p class="muted">الترحيل ينزّل ملفًا بترميز Base64 لتضعه يدويًا في <code>TMD_SESSION_B64</code>. لن تُحذف الجلسة تلقائيًا عند تحديث النظام.</p>
 <div id="sessionStatus" class="status">حالة الجلسة: ...</div></section>
 
 <section id="auth" class="card"><h2>تسجيل الدخول</h2>
@@ -177,6 +180,8 @@ const prompt=ss.state==='phone'?'أدخل رقم الهاتف ثم أرسل':ss.
 async function refresh(){try{render(await api('/api/state'))}catch(e){document.getElementById('topStatus').textContent=e.message}}
 async function saveSettings(){const body={api_id:api_id.value,api_hash:api_hash.value,bot_token:bot_token.value,phone:phone.value,chat_id:chat_id.value,storage_path:storage_path.value,allowed_user_ids:allowed_user_ids.value,auto_start:auto_start.checked};try{await api('/api/settings',{method:'POST',body:JSON.stringify(body)});api_hash.value='';bot_token.value='';phone.value='';alert('تم حفظ الإعدادات محليًا');refresh()}catch(e){alert(e.message)}}
 async function startSession(){try{await api('/api/session/start',{method:'POST'});refresh()}catch(e){alert(e.message)}}
+async function exportSession(){try{const r=await fetch('/api/session/export');if(!r.ok){const d=await r.json();throw new Error(d.error||'تعذر تصدير الجلسة')}const blob=await r.blob();const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='tmd_user.session.b64';a.click();URL.revokeObjectURL(a.href);alert('تم تنزيل ملف الجلسة. استخدم محتواه في TMD_SESSION_B64 على Render.')}catch(e){alert(e.message)}}
+async function resetSession(){if(!confirm('سيؤدي هذا إلى حذف ملف جلسة Telegram الحالي من Render وطلب تسجيل دخول جديد. هل تريد المتابعة؟'))return;try{await api('/api/session/reset',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function requestSavedPhone(){try{await api('/api/session/request-phone',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function resendCode(){try{await api('/api/session/resend-code',{method:'POST'});refresh()}catch(e){alert(e.message)}}
 async function sendAuth(kind){try{await api('/api/auth',{method:'POST',body:JSON.stringify({kind,value:authValue.value})});authValue.value='';refresh()}catch(e){alert(e.message)}}
@@ -232,6 +237,28 @@ def api_session_start():
         return jsonify({"error": "أدخل api_id وapi_hash واحفظ الإعدادات أولًا"}), 400
     manager.configure_session(str(current["api_id"]), str(current["api_hash"]), str(current["session_path"]))
     return jsonify({"ok": True})
+
+
+@app.get("/api/session/export")
+def api_session_export():
+    ok, encoded = manager.export_session()
+    if not ok:
+        return jsonify({"error": encoded}), 400
+    return send_file(
+        io.BytesIO(encoded.encode("ascii")),
+        mimetype="text/plain",
+        as_attachment=True,
+        download_name="tmd_user.session.b64",
+    )
+
+
+@app.post("/api/session/reset")
+def api_session_reset():
+    ok, message = manager.reset_session()
+    if not ok:
+        return jsonify({"error": message}), 400
+    log("تم تنفيذ إزالة جلسة Telegram بطلب صريح وبدأت جلسة جديدة؛ لم تُحذف أي جلسة تلقائيًا.")
+    return jsonify({"ok": True, "message": message})
 
 
 @app.post("/api/session/request-phone")

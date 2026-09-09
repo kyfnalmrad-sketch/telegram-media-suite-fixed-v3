@@ -35,6 +35,7 @@ uploaded/original-sanitized-archive
 | `ALLOWED_USER_IDS` | معرفات المستخدمين المسموح لهم |
 | `TMD_SESSION_SETUP_OWNER_ID` | معرف مالك إعداد الجلسة |
 | `TMD_SESSION_B64` | جلسة Telegram إن كانت متاحة |
+| `TMD_SESSION_IMPORT_MODE` | اتركها `preserve`؛ استخدم `replace` فقط لاستبدال جلسة موجودة عمدًا |
 | `TMD_DASHBOARD_TOKEN` | رمز حماية لوحة الإدارة |
 | `TMD_SUITE_DATA` | `/opt/render/project/src/.tmd-data` |
 | `TMD_HOST` | `0.0.0.0` |
@@ -61,7 +62,9 @@ https://SERVICE-NAME.onrender.com/health
 
 ## ملاحظات مهمة
 
-إذا لم تكن `TMD_SESSION_B64` صالحة، ستظهر الجلسة في حالة `code`، ويجب إكمال المصادقة من لوحة الإدارة. خدمات Render المجانية قد تدخل في وضع الخمول؛ لذلك لا يُضمن التشغيل الدائم من دون خدمة مراقبة HTTP خارجية.
+إذا لم تكن `TMD_SESSION_B64` صالحة، ستظهر الجلسة في حالة `code`، ويجب إكمال المصادقة من لوحة الإدارة. في لوحة الإدارة يوجد خيار **ترحيل الجلسة إلى Render** لتنزيل ملف `tmd_user.session.b64`، ثم يُنسخ محتواه إلى `TMD_SESSION_B64`. الوضع الافتراضي `preserve` لا يستبدل جلسة موجودة عند إعادة التشغيل أو النشر؛ ولا تُحذف الجلسة إلا عبر خيار **إزالة جلسة Render وبدء جديدة** وبعد تأكيد صريح.
+
+خطأ `AccessTokenExpired` يخص `BOT_TOKEN` المنتهي أو الملغى، وليس جلسة الحساب الشخصي. عند ظهوره حدّث `BOT_TOKEN` من إعدادات البوت فقط، واترك `TMD_SESSION_B64` والجلسة كما هما.
 
 يجب ضبط خدمة المراقبة الخارجية على طلب:
 

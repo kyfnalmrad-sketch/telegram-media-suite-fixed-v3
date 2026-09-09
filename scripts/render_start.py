@@ -18,8 +18,11 @@ def bootstrap() -> None:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
     encoded_session = os.environ.get("TMD_SESSION_B64", "").strip()
+    import_mode = os.environ.get("TMD_SESSION_IMPORT_MODE", "preserve").strip().lower()
     session_file = SESSION_DIR / "tmd_user.session"
-    if encoded_session:
+    # Render may restart or redeploy the service. Preserve the session already
+    # present on disk unless the operator explicitly requests replacement.
+    if encoded_session and (not session_file.exists() or import_mode == "replace"):
         session_bytes = base64.b64decode(encoded_session, validate=True)
         temporary_session = session_file.with_suffix(".session.tmp")
         temporary_session.write_bytes(session_bytes)

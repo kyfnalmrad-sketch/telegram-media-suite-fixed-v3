@@ -32,6 +32,8 @@ services:
         value: "2104850156"
       - key: TMD_SESSION_B64
         sync: false
+      - key: TMD_SESSION_IMPORT_MODE
+        value: preserve
       - key: TMD_DASHBOARD_TOKEN
         sync: false
       - key: SELF_ENROLLMENT_ENABLED
