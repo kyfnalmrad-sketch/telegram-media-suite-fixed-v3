@@ -49,6 +49,7 @@ class TelegramSession:
         self.client: Client | None = None
         self.thread: threading.Thread | None = None
         self.state = "starting"
+        self.state_origin = "startup"
         self.pending_phone = ""
         self.pending_hash = ""
         self.error = ""
@@ -79,6 +80,7 @@ class TelegramSession:
             if not session_file.exists():
                 # لا ننتظر اتصالًا شبكيًا قبل أن يطلب المالك بدء التسجيل من /start.
                 # الاتصال الأول وإنشاء ملف الجلسة يحدثان داخل _send_code.
+                self.state_origin = "new_login"
                 self._set_state("phone", "")
                 self.log("لا توجد جلسة محفوظة؛ تنتظر جلسة Telegram رقم الهاتف من المالك.")
             else:
@@ -102,9 +104,11 @@ class TelegramSession:
         except asyncio.TimeoutError as exc:
             raise TimeoutError("انتهت مهلة الاتصال بخوادم Telegram") from exc
         if authorized:
+            self.state_origin = "saved_session"
             self._set_state("ready", "")
-            self.log("تم فتح جلسة Telegram المحفوظة.")
+            self.log("تم فتح جلسة Telegram المحفوظة تلقائيًا؛ لم يُطلب تسجيل دخول جديد.")
         else:
+            self.state_origin = "new_login"
             self._set_state("phone", "")
             self.log("الجلسة غير موثقة؛ أدخل رقم الهاتف من الواجهة.")
 
@@ -115,7 +119,7 @@ class TelegramSession:
 
     def snapshot(self) -> dict[str, str]:
         with self.lock:
-            return {"state": self.state, "error": self.error}
+            return {"state": self.state, "error": self.error, "origin": self.state_origin}
 
     def submit_phone(self, phone: str) -> None:
         self._submit(self._send_code(phone))
@@ -163,6 +167,7 @@ class TelegramSession:
             return
         try:
             await self.client.sign_in(self.pending_phone, self.pending_hash, code)
+            self.state_origin = "new_login"
             self._set_state("ready", "")
             self.log("تم تسجيل الدخول وحفظ الجلسة.")
             if self.on_ready:
@@ -178,6 +183,7 @@ class TelegramSession:
         if not self.client:
             return
         await self.client.check_password(password)
+        self.state_origin = "new_login"
         self._set_state("ready", "")
         self.log("تم التحقق من كلمة المرور وحفظ الجلسة.")
         if self.on_ready:
