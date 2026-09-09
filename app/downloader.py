@@ -595,8 +595,7 @@ class DownloadManager:
         path = self.session_file()
         if not path:
             return False, "لم تبدأ جلسة Telegram بعد"
-        if not self.render_sync.clear():
-            return False, "تعذر إزالة نسخة الجلسة من Render؛ لم يتم حذف الجلسة المحلية"
+        remote_cleared = self.render_sync.clear()
         if self.session:
             self.session.stop()
         session_dir = path.parent
@@ -612,7 +611,9 @@ class DownloadManager:
         )
         self._attach_session_sync(self.session)
         self.session.start()
-        return True, "تمت إزالة الجلسة القديمة وبدأت جلسة جديدة"
+        if remote_cleared:
+            return True, "تمت إزالة الجلسة القديمة من Render وبدأت جلسة جديدة؛ أدخل Phone الآن"
+        return True, "تم حذف الجلسة المحلية وبدأت جلسة جديدة؛ تعذر حذف نسخة Render القديمة، وسيجري تحديثها تلقائيًا بعد نجاح تسجيل الدخول"
 
     def resend_auth_code(self) -> str:
         if not self.session:
