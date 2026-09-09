@@ -17,6 +17,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
+from render_sync import RenderSessionSync
+
 from pyrogram import Client
 from pyrogram.errors import SessionPasswordNeeded, RPCError
 
@@ -51,6 +53,7 @@ class TelegramSession:
         self.pending_hash = ""
         self.error = ""
         self.lock = threading.Lock()
+        self.on_ready: Callable[[], None] | None = None
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -162,6 +165,8 @@ class TelegramSession:
             await self.client.sign_in(self.pending_phone, self.pending_hash, code)
             self._set_state("ready", "")
             self.log("تم تسجيل الدخول وحفظ الجلسة.")
+            if self.on_ready:
+                self.on_ready()
         except SessionPasswordNeeded:
             self._set_state("password", "")
             self.log("الحساب يحتاج كلمة مرور التحقق بخطوتين.")
@@ -175,6 +180,8 @@ class TelegramSession:
         await self.client.check_password(password)
         self._set_state("ready", "")
         self.log("تم التحقق من كلمة المرور وحفظ الجلسة.")
+        if self.on_ready:
+            self.on_ready()
 
     def _submit(self, coroutine: Any) -> None:
         if not self.loop or not self.thread or not self.thread.is_alive():
@@ -540,6 +547,7 @@ def message_file_name(message: Any, context_label: str = "") -> str:
 class DownloadManager:
     def __init__(self, log: Callable[[str], None] | None = None):
         self.log = log or (lambda message: None)
+        self.render_sync = RenderSessionSync(self.log)
         self.session: TelegramSession | None = None
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
@@ -548,7 +556,18 @@ class DownloadManager:
         if self.session and self.session.snapshot()["state"] not in ("error", "stopped"):
             return
         self.session = TelegramSession(api_id, api_hash, session_path, self.log)
+        self._attach_session_sync(self.session)
         self.session.start()
+
+    def _attach_session_sync(self, session: TelegramSession) -> None:
+        session.on_ready = lambda: threading.Thread(
+            target=self._sync_ready_session, daemon=True, name="render-session-sync"
+        ).start()
+
+    def _sync_ready_session(self) -> None:
+        path = self.session_file()
+        if path:
+            self.render_sync.push_file(path)
 
     def session_snapshot(self) -> dict[str, str]:
         return self.session.snapshot() if self.session else {"state": "not_started", "error": ""}
@@ -570,6 +589,8 @@ class DownloadManager:
         path = self.session_file()
         if not path:
             return False, "لم تبدأ جلسة Telegram بعد"
+        if not self.render_sync.clear():
+            return False, "تعذر إزالة نسخة الجلسة من Render؛ لم يتم حذف الجلسة المحلية"
         if self.session:
             self.session.stop()
         session_dir = path.parent
@@ -583,6 +604,7 @@ class DownloadManager:
         self.session = TelegramSession(
             str(self.session.api_id), self.session.api_hash, str(session_dir), self.log
         )
+        self._attach_session_sync(self.session)
         self.session.start()
         return True, "تمت إزالة الجلسة القديمة وبدأت جلسة جديدة"
 

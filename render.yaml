@@ -36,5 +36,9 @@ services:
         value: preserve
       - key: TMD_DASHBOARD_TOKEN
         sync: false
+      - key: RENDER_API_KEY
+        sync: false
+      - key: RENDER_SERVICE_ID
+        value: srv-da8arrcs728c73b6sd00
       - key: SELF_ENROLLMENT_ENABLED
-        value: "false"
+        value: "true"

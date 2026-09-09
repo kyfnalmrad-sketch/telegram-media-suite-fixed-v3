@@ -38,10 +38,12 @@ uploaded/original-sanitized-archive
 | `TMD_SESSION_IMPORT_MODE` | اتركها `preserve`؛ استخدم `replace` فقط لاستبدال جلسة موجودة عمدًا |
 | `TMD_DASHBOARD_TOKEN` | رمز حماية لوحة الإدارة |
 | `TMD_SUITE_DATA` | `/opt/render/project/src/.tmd-data` |
+| `RENDER_API_KEY` | مفتاح Render API؛ يوضع يدويًا في Render فقط ولا يُرفع إلى GitHub |
+| `RENDER_SERVICE_ID` | معرّف خدمة Render، مثل `srv-da8arrcs728c73b6sd00` |
 | `TMD_HOST` | `0.0.0.0` |
 | `TMD_OPEN_BROWSER` | `false` |
 | `AUTO_START` | `true` |
-| `SELF_ENROLLMENT_ENABLED` | `false` |
+| `SELF_ENROLLMENT_ENABLED` | `true` |
 | `PYTHON_VERSION` | `3.12.4` |
 
 ## لوحة تشغيل الجلسة
@@ -65,6 +67,12 @@ https://SERVICE-NAME.onrender.com/health
 إذا لم تكن `TMD_SESSION_B64` صالحة، ستظهر الجلسة في حالة `code`، ويجب إكمال المصادقة من لوحة الإدارة. في لوحة الإدارة يوجد خيار **ترحيل الجلسة إلى Render** لتنزيل ملف `tmd_user.session.b64`، ثم يُنسخ محتواه إلى `TMD_SESSION_B64`. الوضع الافتراضي `preserve` لا يستبدل جلسة موجودة عند إعادة التشغيل أو النشر؛ ولا تُحذف الجلسة إلا عبر خيار **إزالة جلسة Render وبدء جديدة** وبعد تأكيد صريح.
 
 خطأ `AccessTokenExpired` يخص `BOT_TOKEN` المنتهي أو الملغى، وليس جلسة الحساب الشخصي. عند ظهوره حدّث `BOT_TOKEN` من إعدادات البوت فقط، واترك `TMD_SESSION_B64` والجلسة كما هما.
+
+## مزامنة الجلسة تلقائيًا عبر Render API
+
+بعد نجاح تسجيل دخول جلسة Telegram، يرسل التطبيق نسخة Base64 إلى متغير `TMD_SESSION_B64` عبر طلب `PUT` إلى Render API. لا يظهر المفتاح أو محتوى الجلسة في السجل. لإعداد ذلك، أنشئ Render API Key من إعدادات الحساب، ثم أضف قيمته يدويًا في Environment باسم `RENDER_API_KEY`، وأضف `RENDER_SERVICE_ID` بالمعرّف الخاص بالخدمة. لا تضع مفتاح API في GitHub أو `render.yaml`.
+
+عند اختيار إزالة الجلسة من اللوحة، يحاول التطبيق إزالة النسخة البعيدة أولًا، ولا يحذف النسخة المحلية إذا فشلت إزالة Render. بعد تسجيل الدخول الجديد، تتم المزامنة تلقائيًا. كما أن `SELF_ENROLLMENT_ENABLED=true` يجعل أي مستخدم يرسل `/start` يرى User ID ويحتاج إلى الضغط على «نعم» قبل إضافته إلى قائمة السماح.
 
 يجب ضبط خدمة المراقبة الخارجية على طلب:
 
