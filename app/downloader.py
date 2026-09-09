@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import html
 import re
 import threading
@@ -589,6 +590,31 @@ class DownloadManager:
         if not path or not path.exists():
             return False, "لا توجد جلسة محفوظة للتصدير"
         return True, base64.b64encode(path.read_bytes()).decode("ascii")
+
+    def restore_session_from_env(self, api_id: str, api_hash: str, session_path: str) -> tuple[bool, str]:
+        """Explicitly restore the last Render session and reconnect the user client."""
+        encoded = os.environ.get("TMD_SESSION_B64", "").strip()
+        if not encoded:
+            return False, "لا توجد نسخة جلسة في TMD_SESSION_B64 على Render"
+        try:
+            session_bytes = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            return False, "قيمة TMD_SESSION_B64 غير صالحة"
+        if not session_bytes:
+            return False, "نسخة الجلسة في Render فارغة"
+        if self.session:
+            self.session.stop()
+        target_dir = Path(session_path).expanduser()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        session_file = target_dir / "tmd_user.session"
+        temporary = session_file.with_suffix(".session.restore.tmp")
+        temporary.write_bytes(session_bytes)
+        temporary.chmod(0o600)
+        os.replace(temporary, session_file)
+        self.session = TelegramSession(api_id, api_hash, str(target_dir), self.log)
+        self._attach_session_sync(self.session)
+        self.session.start()
+        return True, "تمت استعادة الجلسة السابقة وبدأ الاتصال بها تلقائيًا"
 
     def reset_session(self) -> tuple[bool, str]:
         """Explicitly remove the local session and prepare a fresh login."""
